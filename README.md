@@ -122,6 +122,10 @@ upscale (SPrCad), sửa ảnh, `NARWHAL`, Omni 4s/6s, key 9:16 của Veo Fast đ
   response (`PAGE_UNLOADED`), dù Flow vẫn tạo ảnh. Khi đó hub tự tìm lại ảnh trong project (theo client
   uuid của request, tối đa 150 giây; cần extension ≥ 1.0.2). Muốn xem kết quả trên Flow thì mở một tab
   Flow khác hoặc chờ job xong rồi hãy tải lại.
+* Chrome đăng nhập nhiều tài khoản Google: tab Flow của tài khoản phụ có đường dẫn `flow.google.com/u/N/…`
+  và RPC phải đi qua `/u/N/` (extension ≥ 1.0.3 tự làm). Hub chạy request trong tab đang mở đúng project
+  của request; nếu mở tab Flow của nhiều tài khoản cùng lúc, hãy đặt **project mặc định** trong Cài đặt
+  hoặc gửi `project_id` để chắc chắn dùng đúng tài khoản.
 * Đây là tự động hoá dịch vụ của Google trên tài khoản của bạn — cân nhắc điều khoản sử dụng.
 * Token `at`, cookie không bao giờ rời trình duyệt; Observation ẩn cookie trước khi gửi về server.
 

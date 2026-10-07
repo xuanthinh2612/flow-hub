@@ -405,8 +405,13 @@ class JobEngine:
         try:
             return fb.first_payload(text, rpcid)
         except fb.FlowError:
-            if (result.get("status") or 200) >= 400:
-                raise fb.FlowError(f"{rpcid}: HTTP {result.get('status')}")
+            status = result.get("status") or 200
+            if status == 400:   # the whole batch refused before reaching the RPC: session, not body
+                raise fb.FlowError(f"{rpcid}: HTTP 400 — Flow từ chối cả request (phiên/token `at` không khớp). "
+                                   "Tab Flow đăng nhập bằng tài khoản phụ (flow.google.com/u/N/…) cần extension "
+                                   "≥ 1.0.3; nếu vẫn lỗi hãy F5 tab Flow")
+            if status >= 400:
+                raise fb.FlowError(f"{rpcid}: HTTP {status}")
             raise
 
     def _project_for(self, job: dict, worker: "Worker") -> str:
@@ -421,7 +426,8 @@ class JobEngine:
         if job is None or job["status"] != "queued":
             return
         try:
-            worker = self.hub.pick(job["spec"].get("worker_id"))
+            worker = self.hub.pick(job["spec"].get("worker_id"),
+                                   job["spec"].get("project_id") or self.settings.get("project_id"))
             if worker is None:
                 job["note"] = "Chờ extension (worker) kết nối…"
                 self._save(job, "note")

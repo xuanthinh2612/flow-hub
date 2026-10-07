@@ -140,11 +140,19 @@ function send(msg) {
 
 // Keepalive: WebSocket traffic keeps an MV3 worker alive (Chrome 116+), and the
 // server likes a fresh view of the Flow tabs anyway.
-setInterval(async () => {
+async function pushStatus() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     send({ type: 'status', flow: await flowStatus(), stats });
   }
-}, 20000);
+}
+setInterval(pushStatus, 20000);
+
+// A Flow tab moving to another project or account (/u/N/) is reported at once, so
+// the next job uses the project open now rather than the one of 20 s ago.
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.url?.startsWith(FLOW_URL)) pushStatus().catch(() => {});
+});
+chrome.tabs.onRemoved.addListener(() => { pushStatus().catch(() => {}); });
 
 async function handle(msg) {
   switch (msg.type) {
@@ -202,7 +210,11 @@ function bytesToB64(bytes) {
 
 async function runBatchRpc(cmd) {
   const tabs = await chrome.tabs.query({ url: FLOW_TABS });
-  let candidate = tabs.find((t) => !t.discarded) || tabs[0];
+  // Prefer the tab showing the project the body names: with several Google
+  // accounts signed in (flow.google.com/u/N/…) a project only exists in its own account.
+  const showsProject = (t) => { const m = UUID_RE.exec(t.url || ''); return !!m && cmd.freq.includes(m[0]); };
+  let candidate = tabs.find((t) => !t.discarded && showsProject(t)) || tabs.find(showsProject)
+    || tabs.find((t) => !t.discarded) || tabs[0];
   if (!candidate) {
     try {
       const opened = await openFlowTab(false);
@@ -218,7 +230,7 @@ async function runBatchRpc(cmd) {
 
   let freq = cmd.freq;
   if (cmd.captchaAction && freq.includes(CAPTCHA_SLOT)) {
-    const solved = await solveCaptcha(cmd.captchaAction);
+    const solved = await solveCaptcha(cmd.captchaAction, tab.id);
     if (!solved?.token) return { error: `CAPTCHA_FAILED: ${solved?.error || 'no token'}` };
     freq = freq.split(CAPTCHA_SLOT).join(solved.token);
   }
@@ -235,8 +247,11 @@ async function runBatchRpc(cmd) {
       if (!at) return { error: 'NO_AT_TOKEN (tab Flow chưa đăng nhập hoặc chưa tải xong)' };
       // Same WIZ metadata and header spelling as Flow's own client.
       const sourcePath = location.pathname || '/';
+      // Signed into several Google accounts, Flow lives under /u/N/ and so do its
+      // RPCs: the bare path is account 0's session, which rejects this tab's `at` (HTTP 400).
+      const account = (sourcePath.match(/^\/u\/\d+(?=\/)/) || [''])[0];
       const hl = (document.documentElement.lang || navigator.language || 'en').split('-')[0];
-      const url = `${batchPath}?rpcids=${encodeURIComponent(rpcid)}` +
+      const url = `${account}${batchPath}?rpcids=${encodeURIComponent(rpcid)}` +
         `&source-path=${encodeURIComponent(sourcePath)}` +
         `&bl=${encodeURIComponent(wiz.cfb2h || '')}&f.sid=${encodeURIComponent(wiz.FdrFJe || '')}` +
         `&hl=${encodeURIComponent(hl)}&_reqid=${reqid}&rt=c`;
@@ -347,8 +362,9 @@ function captchaFromTab(tabId, action) {
   });
 }
 
-async function solveCaptcha(action) {
-  const candidates = await chrome.tabs.query({ url: FLOW_TABS });
+async function solveCaptcha(action, preferTabId) {
+  const tabs = await chrome.tabs.query({ url: FLOW_TABS });
+  const candidates = [...tabs.filter((t) => t.id === preferTabId), ...tabs.filter((t) => t.id !== preferTabId)];
   const errors = [];
   for (const tab of candidates) {
     const live = await reviveTab(tab);

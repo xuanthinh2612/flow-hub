@@ -118,10 +118,14 @@ class WorkerHub:
     def online(self) -> list[Worker]:
         return list(self.workers.values())
 
-    def pick(self, worker_id: Optional[str] = None) -> Optional[Worker]:
+    def pick(self, worker_id: Optional[str] = None, project_id: Optional[str] = None) -> Optional[Worker]:
+        """A named worker, else the least busy one with a Flow tab. A project only
+        exists in one Google account, so a worker showing it is preferred."""
         if worker_id:
             return self.workers.get(worker_id)
         live = [w for w in self.workers.values() if (w.flow.get("tabs") or 0) > 0] or list(self.workers.values())
+        if project_id:
+            live = [w for w in live if project_id in w.projects] or live
         return min(live, key=lambda w: w.active_calls) if live else None
 
     async def wait_for(self, worker_id: Optional[str], timeout: float) -> Optional[Worker]:
