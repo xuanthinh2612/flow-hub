@@ -100,12 +100,19 @@ Loại job: `image`, `character`, `edit`, `t2v`, `i2v`, `first_last`, `r2v`, `up
 
 ## Trạng thái đã kiểm chứng (07/10/2026)
 
-* Đã chạy thật trên Flow: text → video `veo_3_1_t2v_fast` (từ bản extension trước).
-* Body khớp từng byte với request thật của trang: text → video (`veo_3_1_t2v_fast`, `…_portrait`,
-  `veo_3_1_t2v_lite`, `abra_t2v_8s`, `abra_t2v_8s_360p`) và ảnh `BELUGA`.
-* Chưa thấy trên Flow hiện tại (đánh dấu *unverified* trong Models): ảnh → video, đầu + cuối,
-  ingredients, upscale, các model ảnh cũ. Hãy tạo thử một lần trên giao diện Flow — Observation sẽ
-  xác minh hoặc báo builder lệch.
+Body Flow Hub dựng **khớp từng byte** với request thật của trang (`tests/fixtures/observed_requests.json`):
+
+| Loại | Đã khớp |
+|---|---|
+| Ảnh (ogiZ0b) | `BELUGA`, `HARBOR_SEAL`, `GEM_PIX_2` · đủ 5 tỉ lệ · 1/2/4 biến thể **trong 1 request** · ảnh tham chiếu · gắn Nhân vật (`character_id`) |
+| Text → video (YhhmEf) | `veo_3_1_t2v_fast`, `…_portrait`, `veo_3_1_t2v_lite` (chung key 2 tỉ lệ), `abra_t2v_8s/10s` (+ `_360p`) |
+| Đầu + cuối (nprQif) | `omni_flash_i2v_8s_first_last`, `veo_3_1_i2v_s_fast_fl` (16:9), `veo_3_1_interpolation_lite` · crop giữa khi tỉ lệ ảnh ≠ video |
+| Ingredients (MZZa6b) | `abra_r2v_6s_360p`, `veo_3_1_r2v_fast_landscape` |
+| Upload (maseQ) | action reCAPTCHA `UPLOAD_IMAGE` |
+
+Chưa thấy trên Flow hiện tại (*unverified* trong Models): ảnh → video (eb1hJf, cả Veo lẫn Omni),
+upscale (SPrCad), sửa ảnh, `NARWHAL`, Omni 4s/6s, key 9:16 của Veo Fast đầu + cuối, Omni đầu + cuối 360p
+(hub từ chối thay vì đoán). Tạo thử một lần trên giao diện Flow — Observation sẽ xác minh hoặc báo builder lệch.
 
 ## Lưu ý
 
@@ -113,7 +120,7 @@ Loại job: `image`, `character`, `edit`, `t2v`, `i2v`, `first_last`, `r2v`, `up
   giãn cách 2 giây giữa các lệnh tạo; lỗi `PUBLIC_ERROR_UNUSUAL_ACTIVITY` không được tự thử lại.
 * Request tạo ảnh chạy **đồng bộ trong tab Flow** (~20 giây): F5 / chuyển trang tab đó giữa chừng sẽ huỷ
   response (`PAGE_UNLOADED`), dù Flow vẫn tạo ảnh. Khi đó hub tự tìm lại ảnh trong project (theo client
-  uuid của request, tối đa 150 giây; cần extension ≥ 1.0.1). Muốn xem kết quả trên Flow thì mở một tab
+  uuid của request, tối đa 150 giây; cần extension ≥ 1.0.2). Muốn xem kết quả trên Flow thì mở một tab
   Flow khác hoặc chờ job xong rồi hãy tải lại.
 * Đây là tự động hoá dịch vụ của Google trên tài khoản của bạn — cân nhắc điều khoản sử dụng.
 * Token `at`, cookie không bao giờ rời trình duyệt; Observation ẩn cookie trước khi gửi về server.

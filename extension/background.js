@@ -257,9 +257,14 @@ async function runBatchRpc(cmd) {
         return { error: `FETCH_FAILED: ${e?.message || e}` };
       }
       if (match) {
-        const found = text.indexOf(match);
-        return { status: resp.status, matched: found !== -1,
-          text: found === -1 ? '' : text.slice(Math.max(0, found - matchContext), found + 800) };
+        // A marker or a list of them; every hit (up to 8 each) gets its own window.
+        const windows = [];
+        for (const marker of [].concat(match)) {
+          for (let found = text.indexOf(marker), n = 0; found !== -1 && n < 8; found = text.indexOf(marker, found + 1), n++) {
+            windows.push(text.slice(Math.max(0, found - matchContext), found + 800));
+          }
+        }
+        return { status: resp.status, matched: windows.length > 0, text: windows.join('\n') };
       }
       return { status: resp.status, text: text.slice(0, maxText) };
     },
@@ -388,10 +393,13 @@ chrome.webRequest.onBeforeRequest.addListener((d) => {
   noteSent(d.url);
   if (!observeCfg.enabled) return;
   const form = readForm(d.requestBody);
-  const freq = form.get('f.req') || '';
+  const raw = form.get('f.req') || '';
+  // Upload bodies carry the whole image as base64: keep its length, not its bytes,
+  // so the rest of the body still decodes on the server.
+  const freq = raw.length > 20000 ? raw.replace(/[A-Za-z0-9+/=]{20000,}/g, (m) => `<base64 ${m.length}>`) : raw;
   pendingObs.set(d.requestId, {
     kind: 'batchexecute', url: d.url, ts: d.timeStamp, tab_id: d.tabId,
-    freq: freq.length > MAX_FREQ ? freq.slice(0, MAX_FREQ) : freq, freq_size: freq.length,
+    freq: freq.length > MAX_FREQ ? freq.slice(0, MAX_FREQ) : freq, freq_size: raw.length,
     form_keys: [...new Set(form.keys())], start: d.timeStamp,   // the `at` value itself is never sent
   });
 }, { urls: OBS_BATCH_URLS }, ['requestBody']);

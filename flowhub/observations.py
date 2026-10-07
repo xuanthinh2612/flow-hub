@@ -74,6 +74,7 @@ class ObservationStore:
         for rpcid, name in fb.RPC_NAMES.items():
             self.db.insert("known_rpcs", {"rpcid": rpcid, "name": name, "first_seen": now(), "count": 0},
                            ignore=True)
+            self.db.execute("UPDATE known_rpcs SET name=? WHERE rpcid=? AND name IS NULL", (name, rpcid))
 
     # ── captcha actions ──
     def captcha_action_for(self, rpcid: str) -> Optional[str]:
@@ -100,7 +101,8 @@ class ObservationStore:
         reqid = params.get("_reqid")
         own = bool(self.hub and reqid and reqid in self.hub.own_reqids)
         rpcs = ob.decode_freq(entry.get("freq"))
-        rpcids = [r["rpcid"] for r in rpcs] or [x for x in (params.get("rpcids") or "").split(",") if x]
+        url_rpcids = [x for x in (params.get("rpcids") or "").split(",") if x]
+        rpcids = [r["rpcid"] for r in rpcs if r["rpcid"] != "?"] or url_rpcids
         row = {
             "ts": float(entry.get("ts") or time.time() * 1000) / 1000, "worker_id": worker_id,
             "tab_id": entry.get("tab_id"), "kind": "batchexecute", "source": "hub" if own else "page",
@@ -184,6 +186,9 @@ class ObservationStore:
                 self.db.execute("UPDATE known_rpcs SET last_seen=?, count=count+1 WHERE rpcid=?", (t, rpcid))
             inner = rpc.get("inner")
             if inner is None:
+                # cut short or undecodable (an upload before extension 1.0.2): the captcha still counts
+                if ob.raw_carries_captcha(rpc.get("raw")):
+                    self._learn_captcha(rpcid, known, row, entry)
                 continue
 
             for use in ob.model_uses(rpcid, inner):
@@ -198,16 +203,7 @@ class ObservationStore:
                                        dedupe=f"verified:{use['key']}", window_s=10 ** 9)
 
             if ob.carries_captcha(inner):
-                last_action = self._last_page_action.get(entry.get("tab_id"))
-                if last_action and row["ts"] - last_action[1] < 8:
-                    action = last_action[0]
-                    current = (known or {}).get("captcha_action") or fb.DEFAULT_CAPTCHA_ACTIONS.get(rpcid)
-                    self.db.execute("UPDATE known_rpcs SET captcha_action=? WHERE rpcid=?", (action, rpcid))
-                    if current and current != action:
-                        self.alerts.raise_("captcha_action", f"{rpcid} giờ dùng action {action}",
-                                           f"Trước đó {current}; Flow Hub sẽ dùng action mới.",
-                                           {"rpcid": rpcid, "from": current, "to": action},
-                                           dedupe=f"captcha:{rpcid}:{action}", window_s=10 ** 9)
+                self._learn_captcha(rpcid, known, row, entry)
 
             if rpcid in ob.BUILT_RPCS:
                 result = ob.builder_check(rpcid, inner)
@@ -220,6 +216,20 @@ class ObservationStore:
                                        f"hub={first.get('built')!r}", result,
                                        dedupe=f"drift:{rpcid}:{first.get('path')}")
         return checks or None
+
+    def _learn_captcha(self, rpcid: str, known: Optional[dict], row: dict, entry: dict) -> None:
+        """The action of the page's latest reCAPTCHA mint (within 8 s) is the one this RPC uses."""
+        last_action = self._last_page_action.get(entry.get("tab_id"))
+        if not last_action or row["ts"] - last_action[1] >= 8:
+            return
+        action = last_action[0]
+        current = (known or {}).get("captcha_action") or fb.DEFAULT_CAPTCHA_ACTIONS.get(rpcid)
+        self.db.execute("UPDATE known_rpcs SET captcha_action=? WHERE rpcid=?", (action, rpcid))
+        if current and current != action:
+            self.alerts.raise_("captcha_action", f"{rpcid} giờ dùng action {action}",
+                               f"Trước đó {current}; Flow Hub sẽ dùng action mới.",
+                               {"rpcid": rpcid, "from": current, "to": action},
+                               dedupe=f"captcha:{rpcid}:{action}", window_s=10 ** 9)
 
     # ── queries ──
     LIST_COLUMNS = ("id, ts, worker_id, tab_id, kind, source, rpcids, path, params, summary, status, duration_ms, "

@@ -42,6 +42,45 @@ def sniff_mime(data: bytes) -> str:
     return "application/octet-stream"
 
 
+def image_aspect(data: bytes) -> Optional[str]:
+    """"W:H" pixel size of a PNG / JPEG / WebP / GIF, or None. Enough to centre
+    the frame crop of a video made from an uploaded image the way Flow's UI does."""
+    try:
+        size = None
+        if data[:8] == b"\x89PNG\r\n\x1a\n":
+            size = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+        elif data[:3] == b"GIF":
+            size = int.from_bytes(data[6:8], "little"), int.from_bytes(data[8:10], "little")
+        elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            chunk = data[12:16]
+            if chunk == b"VP8 ":
+                size = int.from_bytes(data[26:28], "little") & 0x3FFF, int.from_bytes(data[28:30], "little") & 0x3FFF
+            elif chunk == b"VP8L":
+                bits = int.from_bytes(data[21:25], "little")
+                size = (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+            elif chunk == b"VP8X":
+                size = int.from_bytes(data[24:27], "little") + 1, int.from_bytes(data[27:30], "little") + 1
+        elif data[:2] == b"\xff\xd8":
+            i = 2
+            while i + 9 < len(data):
+                if data[i] != 0xFF:
+                    i += 1
+                    continue
+                marker = data[i + 1]
+                if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                    size = int.from_bytes(data[i + 7:i + 9], "big"), int.from_bytes(data[i + 5:i + 7], "big")
+                    break
+                if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                    i += 2
+                    continue
+                i += 2 + int.from_bytes(data[i + 2:i + 4], "big")
+        if size and size[0] > 0 and size[1] > 0:
+            return f"{size[0]}:{size[1]}"
+    except (IndexError, ValueError):
+        pass
+    return None
+
+
 class MediaStore:
     def __init__(self, db: DB, media_dir: Path, events: "EventHub", hub: "WorkerHub"):
         self.db = db
@@ -102,7 +141,10 @@ class MediaStore:
         safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in media_id)
         path = self.dir / f"{safe}{ext}"
         path.write_bytes(data)
-        self.db.update("media", "id", media_id, {"local_path": str(path), "mime": mime, "size": len(data)})
+        changes = {"local_path": str(path), "mime": mime, "size": len(data)}
+        if mime.startswith("image/") and not (self.get(media_id) or {}).get("aspect"):
+            changes["aspect"] = image_aspect(data)   # media added by id: its crop when used as a frame
+        self.db.update("media", "id", media_id, changes)
         self.events.publish("media", {"id": media_id, "local": True})
         return path
 

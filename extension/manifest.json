@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Flow Hub Worker",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Worker for a Flow Hub server: runs Google Flow requests inside your signed-in flow.google.com tab and reports what the page sends.",
   "minimum_chrome_version": "116",
   "permissions": [

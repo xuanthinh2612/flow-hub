@@ -50,8 +50,9 @@ def decode_freq(freq: Optional[str]) -> list[dict]:
         return []
     try:
         outer = json.loads(freq)
-    except json.JSONDecodeError:
-        return [{"rpcid": "?", "raw": freq[:MAX_STRING], "size": len(freq)}]
+    except json.JSONDecodeError:   # e.g. cut short: still name the RPC (captcha learning keys on it)
+        head = re.match(r'\s*\[\s*\[\s*\[\s*"([A-Za-z0-9]+)"', freq)
+        return [{"rpcid": head.group(1) if head else "?", "raw": freq[:MAX_STRING], "size": len(freq)}]
     items = outer[0] if isinstance(outer, list) and outer and isinstance(outer[0], list) else []
     out = []
     for item in items:
@@ -168,6 +169,14 @@ def find_context(node: Any) -> Optional[list]:
 def carries_captcha(inner: Any) -> bool:
     ctx = find_context(inner)
     return bool(ctx and isinstance(ctx[10][0], str) and len(ctx[10][0]) > 100)
+
+
+_RAW_CAPTCHA = re.compile(r'\[\\*"[0-9A-Za-z_-]{100,}\\*",1\]')
+
+
+def raw_carries_captcha(raw: Optional[str]) -> bool:
+    """Same question for a body that did not decode: a `["<token>",1]` pair, escaped or not."""
+    return bool(raw and _RAW_CAPTCHA.search(raw))
 
 
 # ── reCAPTCHA bodies (protobuf) ─────────────────────────────────────────────
@@ -334,12 +343,16 @@ def rebuild(rpcid: str, inner: Any) -> Optional[str]:
     ctx = find_context(inner)
     project = ctx[5] if ctx else None
     if rpcid == fb.RPC_GEN_IMAGE:
-        item = inner[1][0]
+        items = inner[1]
+        item = items[0]
         inputs = item[2] or []
         refs = [x[0] for x in inputs if isinstance(x, list) and len(x) > 4 and x[4] == fb.REF_TYPE_IMAGE]
         base = next((x[0] for x in inputs if isinstance(x, list) and len(x) > 4 and x[4] == fb.BASE_TYPE_IMAGE), None)
-        return fb.image_request(item[8][0][0][0], project, item[4], item[5], seed=item[3],
-                                ref_media_ids=refs or None, base_media_id=base)
+        ids = inner[4]
+        character = ids[2][0] if len(ids) > 2 and isinstance(ids[2], list) and ids[2] else None
+        return fb.image_request([it[8][0][0][0] for it in items], project, item[4], item[5],
+                                seeds=[it[3] for it in items], ref_media_ids=refs or None, base_media_id=base,
+                                character_id=character)
     item = _video_item(inner)
     if item is None:
         return None

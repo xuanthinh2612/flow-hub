@@ -42,52 +42,72 @@ def _seed_rows() -> list[dict]:
                          is_default=1 if default else 0, sort=sort))
 
     add("image", "beluga", "BELUGA", "BELUGA", status=_V, note=_OBS, default=True, sort=10)
-    add("image", "nano_banana_pro", "Nano Banana Pro", "GEM_PIX_2", sort=20)
+    add("image", "nano_banana_pro", "Nano Banana Pro", "GEM_PIX_2", status=_V, note=_OBS, sort=20)
     add("image", "nano_banana_2", "Nano Banana 2", "NARWHAL", sort=30)
-    add("image", "nano_banana_2_lite", "Nano Banana 2 Lite", "HARBOR_SEAL", sort=40)
+    add("image", "nano_banana_2_lite", "Nano Banana 2 Lite", "HARBOR_SEAL", status=_V, note=_OBS, sort=40)
 
     add("t2v", "veo_3_1_fast", "Veo 3.1 Fast", "veo_3_1_t2v_fast", aspect="landscape", status=_V, note=_OBS,
         default=True, sort=10)
     add("t2v", "veo_3_1_fast", "Veo 3.1 Fast", "veo_3_1_t2v_fast_portrait", aspect="portrait", status=_V,
         note=_OBS, sort=10)
     add("t2v", "veo_3_1_lite", "Veo 3.1 Lite", "veo_3_1_t2v_lite", status=_V,
-        note=_OBS + " (16:9; 9:16 dùng chung key, chưa thấy)", sort=20)
+        note=_OBS + " (16:9 và 9:16 dùng chung key)", sort=20)
+    omni_seen = {("t2v", 8, "720p"), ("t2v", 8, "360p"), ("t2v", 10, "720p"), ("t2v", 10, "360p"),
+                 ("first_last", 8, "720p"), ("r2v", 6, "360p")}
+
+    def omni(mode, key, duration, res, **kw):
+        seen = (mode, duration, res) in omni_seen
+        add(mode, "omni_flash", "Omni Flash", key, duration=duration, resolution=res,
+            status=_V if seen else _U, note=_OBS if seen else "Suy ra từ quy luật tên", **kw)
+
     for duration in (4, 6, 8, 10):
         for res in ("720p", "360p"):
-            key = f"abra_t2v_{duration}s" + ("_360p" if res == "360p" else "")
-            seen = duration == 8
-            add("t2v", "omni_flash", "Omni Flash", key, duration=duration, resolution=res,
-                status=_V if seen else _U, note=_OBS if seen else "Suy ra từ quy luật tên", sort=30)
+            sfx = "_360p" if res == "360p" else ""
+            omni("t2v", f"abra_t2v_{duration}s{sfx}", duration, res, sort=30)
+            omni("i2v", f"abra_i2v_{duration}s{sfx}", duration, res, sort=40)
+            omni("first_last", f"omni_flash_i2v_{duration}s_first_last{sfx}", duration, res, default=True, sort=10)
+            omni("r2v", f"abra_r2v_{duration}s{sfx}", duration, res, default=True, sort=10)
 
     add("i2v", "veo_3_1_lite", "Veo 3.1 Lite", "veo_3_1_i2v_lite", default=True, sort=10)
     add("i2v", "veo_3_1_fast_ultra", "Veo 3.1 Fast (Ultra)", "veo_3_1_i2v_s_fast_ultra", sort=20)
     add("i2v", "veo_3_1_lite_low", "Veo 3.1 Lite Low Priority (Ultra)", "veo_3_1_i2v_lite_low_priority", sort=30)
-    for duration in (4, 6, 8, 10):
-        for res in ("720p", "360p"):
-            sfx = "_360p" if res == "360p" else ""
-            add("i2v", "omni_flash", "Omni Flash", f"abra_i2v_{duration}s{sfx}", duration=duration, resolution=res,
-                sort=40)
-            add("first_last", "omni_flash", "Omni Flash", f"omni_flash_i2v_{duration}s_first_last{sfx}",
-                duration=duration, resolution=res, default=True, sort=10)
-            add("r2v", "omni_flash", "Omni Flash", f"abra_r2v_{duration}s{sfx}", duration=duration,
-                resolution=res, default=True, sort=10)
+
+    add("first_last", "veo_3_1_fast", "Veo 3.1 Fast", "veo_3_1_i2v_s_fast_fl", aspect="landscape", status=_V,
+        note=_OBS + " (16:9; key 9:16 chưa thấy)", sort=20)
+    add("first_last", "veo_3_1_lite", "Veo 3.1 Lite", "veo_3_1_interpolation_lite", status=_V,
+        note=_OBS + " (9:16; Lite dùng chung key cho 2 tỉ lệ như t2v)", sort=30)
+
+    add("r2v", "veo_3_1_fast", "Veo 3.1 Fast", "veo_3_1_r2v_fast_landscape", aspect="landscape", status=_V,
+        note=_OBS, sort=20)
+    add("r2v", "veo_3_1_fast", "Veo 3.1 Fast", "veo_3_1_r2v_fast_portrait", aspect="portrait",
+        note="Suy ra từ …_landscape", sort=20)
     return rows
 
 
 _OMNI = re.compile(r"^(?:abra_(?:t2v|i2v|r2v)|omni_flash_i2v)_(\d+)s(?:_first_last)?(_360p)?$")
+#: Mode words inside Veo keys: veo_3_1_{t2v|i2v_s|r2v|interpolation}_<tier>[_fl][_portrait|_landscape]
+_VEO_MODE = re.compile(r"_(?:t2v|i2v_s|i2v|r2v|interpolation)(?=_)|_fl(?=_|$)")
+_VEO = re.compile(r"^veo_(\d+)_(\d+)_(.+)$")
 
 
 def infer_family(mode: str, key: str, aspect: Optional[str]) -> dict:
-    """Best guess at where a newly seen key belongs."""
+    """Best guess at where a newly seen key belongs. Veo keys join the family of
+    their tier (`veo_3_1_r2v_fast_landscape` → veo_3_1_fast, landscape)."""
     m = _OMNI.match(key)
     if m:
         return {"family": "omni_flash", "family_label": "Omni Flash", "duration": int(m.group(1)),
                 "resolution": "360p" if m.group(2) else "720p", "aspect": None}
-    if key.endswith("_portrait"):
-        base = key[: -len("_portrait")]
-        return {"family": base, "family_label": base, "aspect": "portrait", "duration": None, "resolution": None}
-    family = key.lower()
-    return {"family": family, "family_label": key, "aspect": None, "duration": None, "resolution": None}
+    base, key_aspect = key, None
+    for suffix in ("portrait", "landscape"):
+        if key.endswith("_" + suffix):
+            base, key_aspect = key[: -len(suffix) - 1], suffix
+    veo = _VEO.match(_VEO_MODE.sub("", base))
+    if veo:
+        family = veo.group(0)
+        label = f"Veo {veo.group(1)}.{veo.group(2)} " + veo.group(3).replace("_", " ").title()
+    else:
+        family, label = base.lower(), base
+    return {"family": family, "family_label": label, "aspect": key_aspect, "duration": None, "resolution": None}
 
 
 class Catalog:
@@ -95,10 +115,22 @@ class Catalog:
         self.db = db
 
     def seed(self) -> None:
-        """Insert seed rows that are missing; never overwrite what the user edited."""
+        """Insert seed rows that are missing; never overwrite what the user edited.
+
+        A key Observation added on its own (source `observed`) takes the seed's
+        family and attributes once the seed knows it, and a seed row the seed now
+        lists as verified is upgraded — never the other way round."""
         t = now()
         for row in _seed_rows():
-            self.db.insert("models", {**row, "source": "seed", "first_seen": t, "last_seen": None}, ignore=True)
+            existing = self.db.one("SELECT * FROM models WHERE mode=? AND key=?", (row["mode"], row["key"]))
+            if existing is None:
+                self.db.insert("models", {**row, "source": "seed", "first_seen": t, "last_seen": None}, ignore=True)
+            elif existing["source"] == "observed":
+                self.db.update("models", "id", existing["id"], {
+                    **{k: row[k] for k in ("family", "family_label", "aspect", "duration", "resolution", "sort", "note")},
+                    "source": "seed"})
+            elif existing["source"] == "seed" and existing["status"] == "unverified" and row["status"] == "verified":
+                self.db.update("models", "id", existing["id"], {"status": "verified", "note": row["note"]})
 
     # ── queries ──
     def rows(self, mode: Optional[str] = None) -> list[dict]:

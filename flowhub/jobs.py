@@ -1,7 +1,7 @@
 """The job engine: spec in, Flow RPCs out through a worker, media back.
 
 Job types
-  image / character / edit      ogiZ0b, one RPC per variant (inline image urls)
+  image / character / edit      ogiZ0b, every variant in one RPC (inline image urls)
   t2v / i2v / first_last / r2v  YhhmEf / eb1hJf / nprQif / MZZa6b, then polling
   upload / upscale               maseQ / SPrCad
   template                       a body saved from Observation, re-sent with new values
@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 import httpx
 
 from .db import DB, Settings, now
+from .media import image_aspect
 from .presets import build_character_prompt
 from .protocol import batch as fb
 from .protocol import observe as ob
@@ -70,7 +71,6 @@ class Call:
     rpcid: str
     build: Callable[[], str]
     captcha: Optional[str] = None
-    offset_s: float = 0.0
     text: Optional[str] = None
     extra: dict = field(default_factory=dict)
 
@@ -139,6 +139,8 @@ class JobEngine:
             s["aspect_code"] = aspect if isinstance(aspect, int) else fb.IMAGE_ASPECTS.get(str(aspect))
             if s["aspect_code"] not in (1, 2, 3, 4, 5):
                 raise ValueError(f"tỉ lệ ảnh không hợp lệ: {aspect} (1:1, 9:16, 16:9, 3:4, 4:3)")
+            # kept on the media row: the frame crop of a video made from it depends on it
+            s["aspect"] = next(k for k, v in fb.IMAGE_ASPECTS.items() if v == s["aspect_code"])
         elif kind in VIDEO_TYPES:
             aspect = s.get("aspect", "16:9")
             s["aspect_code"] = fb.VIDEO_ASPECTS.get(str(aspect))
@@ -186,17 +188,18 @@ class JobEngine:
         prompt = s.get("prompt") or ""
         calls: list[Call] = []
         if kind in IMAGE_TYPES:
-            base_seed = int(s["seed"]) if s.get("seed") not in (None, "") else fb.random_seed()
+            # Like Flow's UI: every variant is an item of one call, each with its own seed.
             prompts = s.get("prompts") or []
+            texts = [prompts[i] if i < len(prompts) and prompts[i] else prompt for i in range(s["count"])]
+            seeds = ([int(s["seed"]) + i * 9973 for i in range(s["count"])]
+                     if s.get("seed") not in (None, "") else None)
             base = s.get("base_media_id") if kind == "edit" else None
             refs = [m for m in s["ref_media_ids"] if m != base] or None
-            for i in range(s["count"]):
-                text = prompts[i] if i < len(prompts) and prompts[i] else prompt
-                seed = base_seed + i * 9973
-                calls.append(Call(f"biến thể {i + 1}", fb.RPC_GEN_IMAGE, captcha=cap(fb.RPC_GEN_IMAGE),
-                                  offset_s=fb.IMAGE_SUBMIT_OFFSETS_S[min(i, 3)], text=text,
-                                  build=lambda text=text, seed=seed: fb.image_request(
-                                      text, project_id, s["aspect_code"], model, seed, refs, base)))
+            calls.append(Call(f"{len(texts)} biến thể" if len(texts) > 1 else "ảnh", fb.RPC_GEN_IMAGE,
+                              captcha=cap(fb.RPC_GEN_IMAGE), text=prompt,
+                              build=lambda: fb.image_request(texts, project_id, s["aspect_code"], model,
+                                                             seeds, refs, base, s.get("character_id")),
+                              extra={"texts": texts, "exclude": [m for m in [base, *(refs or [])] if m]}))
         elif kind == "t2v":
             for n in range(s["count"]):
                 calls.append(Call(f"video {n + 1}", fb.RPC_GEN_VIDEO_TEXT, captcha=cap(fb.RPC_GEN_VIDEO_TEXT),
@@ -205,12 +208,15 @@ class JobEngine:
             for i, src in enumerate(s["start_media_ids"]):
                 for n in range(s["count"]):
                     calls.append(Call(f"ảnh {i + 1} #{n + 1}", fb.RPC_GEN_VIDEO, captcha=cap(fb.RPC_GEN_VIDEO),
-                                      build=lambda src=src: fb.i2v_request(prompt, project_id, src, s["aspect_code"], model)))
+                                      build=lambda src=src: fb.i2v_request(prompt, project_id, src, s["aspect_code"], model,
+                                                                           self._crop(src, s["aspect_code"]))))
         elif kind == "first_last":
             for n in range(s["count"]):
                 calls.append(Call(f"đầu+cuối #{n + 1}", fb.RPC_GEN_VIDEO_FIRST_LAST, captcha=cap(fb.RPC_GEN_VIDEO_FIRST_LAST),
-                                  build=lambda: fb.first_last_request(prompt, project_id, s["start_media_id"],
-                                                                      s["end_media_id"], s["aspect_code"], model)))
+                                  build=lambda: fb.first_last_request(
+                                      prompt, project_id, s["start_media_id"], s["end_media_id"], s["aspect_code"], model,
+                                      self._crop(s["start_media_id"], s["aspect_code"]),
+                                      self._crop(s["end_media_id"], s["aspect_code"]))))
         elif kind == "r2v":
             for n in range(s["count"]):
                 calls.append(Call(f"ingredients #{n + 1}", fb.RPC_GEN_VIDEO_REFERENCES, captcha=cap(fb.RPC_GEN_VIDEO_REFERENCES),
@@ -235,6 +241,11 @@ class JobEngine:
                               build=lambda: fb.build_envelope(tpl["rpcid"], ob.render_template(tpl["inner"], values)),
                               extra={"result_kind": tpl.get("result_kind") or "raw"}))
         return calls
+
+    def _crop(self, media_id: str, video_aspect: int) -> list:
+        """The frame crop Flow's UI sends: the image's centre at the video's aspect
+        (full frame when the image's aspect is unknown, e.g. an id typed in by hand)."""
+        return fb.center_crop((self.media.get(media_id) or {}).get("aspect"), video_aspect)
 
     def preview(self, spec: dict) -> list[dict]:
         s = self.normalize(spec)
@@ -373,7 +384,7 @@ class JobEngine:
 
     # ── calling Flow through a worker ──
     async def _call(self, job: Optional[dict], worker: "Worker", rpcid: str, freq: str, captcha: Optional[str],
-                    *, log_call: bool = True, match: Optional[str] = None, timeout: float = 300,
+                    *, log_call: bool = True, match: Optional[str | list[str]] = None, timeout: float = 300,
                     body_preview: Optional[str] = None) -> Any:
         started = now()
         reqid, result = await self.hub.rpc(worker, rpcid, freq, captcha, match=match, timeout=timeout)
@@ -442,71 +453,82 @@ class JobEngine:
 
     async def _run_images(self, job: dict, worker: "Worker", calls: list[Call], project_id: str) -> None:
         gap = float(self.settings.get("min_submit_gap_s") or 0)
-
-        async def one(call: Call):
-            if call.offset_s:
-                await asyncio.sleep(call.offset_s)
-            await worker.pace(gap / 2)
-            freq = call.build()
-            try:
-                payload = await self._call(job, worker, call.rpcid, freq, call.captcha)
-            except ResponseLost as exc:
-                if exc.sent is False:
-                    raise fb.FlowError(f"{exc} — request chưa rời tab nên Flow chưa nhận, hãy tạo lại") from exc
-                found = await self._recover_image(job, project_id, freq)
-                if found is None:
-                    raise fb.FlowError(f"{exc} — không tìm thấy ảnh trong project sau {IMAGE_RECOVER_S}s "
-                                       "(ảnh có thể vẫn hiện trên flow.google.com)") from exc
-                job["warnings"].append(f"{call.label}: {exc} — đã lấy lại ảnh từ project")
-                return found, call.text
-            images = fb.read_images(payload)
-            if not images:
-                raise fb.FlowError("ogiZ0b trả về không có url ảnh")
-            return images[0], call.text
-
-        settled = await asyncio.gather(*(one(c) for c in calls), return_exceptions=True)
-        first_error = None
         s = job["spec"]
-        for call, outcome in zip(calls, settled):
-            if isinstance(outcome, BaseException):
-                if isinstance(outcome, asyncio.CancelledError):
-                    raise outcome
-                first_error = first_error or str(outcome)
-                job["warnings"].append(f"{call.label}: {outcome}")
+        first_error = None
+        expected = 0
+        for call in calls:
+            texts = call.extra.get("texts") or [call.text]
+            expected += len(texts)
+            try:
+                await worker.pace(gap)
+                images = await self._image_call(job, worker, call, project_id, len(texts))
+            except fb.FlowError as exc:
+                first_error = first_error or str(exc)
+                job["warnings"].append(f"{call.label}: {exc}")
                 continue
-            (media_id, url), text = outcome
-            job["results"].append({"kind": "image", "media_id": media_id, "url": url})
-            self.media.upsert({"id": media_id, "kind": "image", "url": url, "prompt": text, "model": s.get("model"),
-                               "source": job["type"], "job_id": job["id"], "aspect": s.get("aspect")})
-            self._download(media_id)
-        self._finish(job, len(job["results"]), len(calls), first_error)
+            if len(images) < len(texts):
+                job["warnings"].append(f"{call.label}: Flow trả về {len(images)}/{len(texts)} ảnh")
+            for i, (media_id, url) in enumerate(images):
+                job["results"].append({"kind": "image", "media_id": media_id, "url": url})
+                self.media.upsert({"id": media_id, "kind": "image", "url": url,
+                                   "prompt": texts[i] if i < len(texts) else call.text, "model": s.get("model"),
+                                   "source": job["type"], "job_id": job["id"], "aspect": s.get("aspect")})
+                self._download(media_id)
+        self._finish(job, len(job["results"]), expected, first_error)
 
-    async def _recover_image(self, job: dict, project_id: str, freq: str) -> Optional[tuple[str, str]]:
+    async def _image_call(self, job: dict, worker: "Worker", call: Call, project_id: str,
+                          expected: int) -> list[tuple[str, str]]:
+        """[(media_id, url)] of one ogiZ0b call, in item order. References and
+        the edited base image are never counted as results."""
+        exclude = set(call.extra.get("exclude") or [])
+        freq = call.build()
+        try:
+            payload = await self._call(job, worker, call.rpcid, freq, call.captcha)
+        except ResponseLost as exc:
+            if exc.sent is False:
+                raise fb.FlowError(f"{exc} — request chưa rời tab nên Flow chưa nhận, hãy tạo lại") from exc
+            found = await self._recover_images(job, project_id, freq, expected, exclude)
+            if not found:
+                raise fb.FlowError(f"{exc} — không tìm thấy ảnh trong project sau {IMAGE_RECOVER_S}s "
+                                   "(ảnh có thể vẫn hiện trên flow.google.com)") from exc
+            job["warnings"].append(f"{call.label}: {exc} — đã lấy lại {len(found)} ảnh từ project")
+            return found
+        images = [im for im in fb.read_images(payload) if im[0] not in exclude]
+        if not images:
+            raise fb.FlowError("ogiZ0b trả về không có url ảnh")
+        return images
+
+    async def _recover_images(self, job: dict, project_id: str, freq: str, expected: int,
+                              exclude: set) -> list[tuple[str, str]]:
         """An ogiZ0b answer was lost (the Flow tab reloaded mid-call), yet Flow
-        renders the image anyway: find it in the project listing by the request's
-        client uuid, then ask as29s for its url. None when it never shows up."""
-        client_id = fb.image_client_id(freq)
-        if not client_id:
-            return None
+        renders the images anyway: find them in the project listing by the
+        request's client uuids, then ask as29s for their urls."""
+        client_ids = fb.image_client_ids(freq)
+        if not client_ids:
+            return []
         job["note"] = "Tab Flow tải lại giữa lúc chờ ảnh — đang tìm ảnh trong project…"
         self._save(job, "note")
         every = 2 * float(self.settings.get("poll_interval_s") or 5)   # the listing is MBs: half the video poll rate
         deadline = now() + IMAGE_RECOVER_S
-        while now() < deadline:
+        found: dict[str, str] = {}
+        while now() < deadline and len(found) < expected:
             await asyncio.sleep(every)
             worker = self.hub.pick(job.get("worker_id")) or self.hub.pick()
             if worker is None:
                 continue
             try:
                 listing = await self._call(job, worker, fb.RPC_PROJECT_MEDIA, fb.project_media_request(project_id),
-                                           None, log_call=False, match=client_id, timeout=120)
+                                           None, log_call=False, match=client_ids, timeout=120)
             except fb.FlowError:
                 continue   # the reloaded page may not be ready yet
-            media_id = fb.find_media_id_before(listing.get("text") or "", client_id) if listing.get("matched") else None
-            urls = await self._media_urls(job, worker, media_id) if media_id else None
-            if urls and urls[1]:
-                return media_id, urls[1]
-        return None
+            text = (listing.get("text") or "") if listing.get("matched") else ""
+            for media_id in fb.find_media_ids_before(text, client_ids):
+                if media_id in found or media_id in exclude:
+                    continue
+                urls = await self._media_urls(job, worker, media_id)
+                if urls and urls[1]:
+                    found[media_id] = urls[1]
+        return list(found.items())
 
     async def _submit_videos(self, job: dict, worker: "Worker", calls: list[Call]) -> None:
         gap = float(self.settings.get("min_submit_gap_s") or 0)
@@ -641,9 +663,10 @@ class JobEngine:
         urls = await self._media_urls(job, worker, media_id)
         url = urls[1] if urls else None
         s = job["spec"]
+        data = base64.b64decode(b64)
         self.media.upsert({"id": media_id, "kind": "image", "url": url, "prompt": s.get("file_name"), "source": "upload",
-                           "job_id": job["id"]})
-        self.media.save_bytes(media_id, base64.b64decode(b64), s.get("mime_type"))
+                           "job_id": job["id"], "aspect": image_aspect(data)})
+        self.media.save_bytes(media_id, data, s.get("mime_type"))
         job["results"].append({"kind": "image", "media_id": media_id, "url": url})
         self._finish(job, 1, 1, None)
 

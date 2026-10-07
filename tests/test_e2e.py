@@ -43,7 +43,8 @@ class FakeFlow:
         self.ops = {}
         self.n = 0
         self.lose_next = None    # "sent" / "unsent": the tab reloads under the next ogiZ0b
-        self.lost_images = {}    # client uuid -> media id Flow rendered while the tab reloaded
+        self.lost_images = []    # media ids Flow rendered while the tab reloaded
+        self.listing = ""        # their workflow records, as escaped in the Zzl0ze answer
 
     def answer(self, msg):
         rpcid, freq = msg["rpcid"], msg["freq"]
@@ -53,10 +54,16 @@ class FakeFlow:
             self.n += 1
             if self.lose_next:
                 lose, self.lose_next = self.lose_next, None
-                if lose == "sent":   # Flow got it and renders it; only the answer is gone
-                    self.lost_images[inner[4][0]] = f"{self.n:08d}-1111-2222-3333-555555555555"
+                if lose == "sent":   # Flow got it and renders every item; only the answer is gone
+                    for i in range(len(inner[1])):
+                        mid = f"{self.n:08d}-1111-2222-3333-5555555555{i:02d}"
+                        self.lost_images.append(mid)
+                        self.listing += (f'[\\"WF{i}\\",null,null,[\\"t\\",[1,2],null,null,\\"{mid}\\",'
+                                         f'\\"{inner[4][0]}\\",[1,3]],\\"{PID}\\"],')
                 return {"error": "PAGE_UNLOADED: tab reloaded", "sent": lose == "sent"}
-            return {"status": 200, "text": env(rpcid, [[f"https://flow-content.google/image/img-{self.n}?sig=1"]])}
+            urls = [f"https://flow-content.google/image/img-{self.n}-{i}?sig=1" for i in range(len(inner[1]))]
+            urls += [f"https://flow-content.google/image/{x[0]}?input" for x in inner[1][0][2] or []]
+            return {"status": 200, "text": env(rpcid, [urls])}
         if rpcid in ("eb1hJf", "nprQif", "MZZa6b"):          # old shape: media id only via the listing
             self.n += 1
             op = f"OP-{self.n}"
@@ -75,10 +82,14 @@ class FakeFlow:
                 records.append([op_id, PID, "SCENE", "CAE" if o["polls"] >= 2 else None])
             return {"status": 200, "text": env(rpcid, [None, 50, records])}
         if rpcid == "Zzl0ze":
-            lost = self.lost_images.get(msg.get("match"))
-            if lost:   # the window starts ahead of the match, where the media id sits
-                return {"status": 200, "matched": True,
-                        "text": f'[\\"WF\\",null,null,[\\"t\\",[1,2],null,null,\\"{lost}\\",\\"{msg["match"]}\\",[1,3]]'}
+            if isinstance(msg.get("match"), list):   # like the extension: a window around every hit
+                windows = []
+                for marker in msg["match"]:
+                    found = self.listing.find(marker)
+                    while found != -1:
+                        windows.append(self.listing[max(0, found - 300):found + 800])
+                        found = self.listing.find(marker, found + 1)
+                return {"status": 200, "matched": bool(windows), "text": "\n".join(windows)}
             o = self.ops.get(msg.get("match"))
             if o and o["polls"] >= 2:
                 return {"status": 200, "matched": True,
@@ -86,7 +97,7 @@ class FakeFlow:
             return {"status": 200, "matched": False, "text": ""}
         if rpcid == "as29s":
             mid = inner[0]
-            if mid.startswith("UPL") or mid in self.lost_images.values():
+            if mid.startswith("UPL") or mid in self.lost_images:
                 return {"status": 200, "text": env(rpcid, [[f"https://flow-content.google/image/{mid}?u"]])}
             o = next((x for x in self.ops.values() if x["media"] == mid), None)
             if o is None:
@@ -184,18 +195,28 @@ def test_auth_required(stack):
 
 
 def test_image_job_with_variants(stack):
+    """Variants go out like the page sends them: one ogiZ0b, one item per image."""
     c, flow = stack["client"], stack["flow"]
     job = c.post("/api/jobs", json={"type": "image", "prompt": "một con cáo", "aspect": "9:16", "count": 2,
                                     "seed": 1000, "ref_media_ids": ["REF-1"]}).json()
     job = wait_job(c, job["id"])
     assert job["status"] == "done" and len(job["results"]) == 2
-    calls = [x for x in flow.calls if x["rpcid"] == "ogiZ0b"][-2:]
-    assert sorted(x["inner"][1][0][3] for x in calls) == [1000, 10973]
-    assert all(x["inner"][1][0][5] == "BELUGA" and x["inner"][1][0][4] == 2 for x in calls)   # default family
-    assert all(x["captcha_action"] == "IMAGE_GENERATION" and fb.CAPTCHA_SLOT in x["freq"] for x in calls)
-    assert all(x["inner"][1][0][7][5] == PID for x in calls)                                      # worker's project
-    assert len(job["rpc_log"]) == 2
-    assert c.get(f"/api/media/{job['results'][0]['media_id']}").json()["source"] == "image"
+    assert "REF-1" not in [r["media_id"] for r in job["results"]], "the reference is an input, not a result"
+    call = [x for x in flow.calls if x["rpcid"] == "ogiZ0b"][-1]
+    items = call["inner"][1]
+    assert [it[3] for it in items] == [1000, 10973]
+    assert all(it[5] == "BELUGA" and it[4] == 2 for it in items)                    # default family, 9:16
+    assert all(it[2] == [["REF-1", None, None, None, fb.REF_TYPE_IMAGE]] and it[7][5] == PID for it in items)
+    assert call["captcha_action"] == "IMAGE_GENERATION" and fb.CAPTCHA_SLOT in call["freq"]
+    assert len(job["rpc_log"]) == 1
+    media = c.get(f"/api/media/{job['results'][0]['media_id']}").json()
+    assert media["source"] == "image" and media["aspect"] == "9:16"
+
+    # a video made from that 9:16 image at 16:9 gets the centred crop Flow's UI sends
+    preview = c.post("/api/jobs/preview", json={"type": "i2v", "prompt": "x", "aspect": "16:9",
+                                                "start_media_ids": [media["id"], "UNKNOWN"]}).json()
+    assert preview[0]["inner"][0][0][4][5] == [0.341796875, None, 0.658203125, 1]
+    assert preview[1]["inner"][0][0][4][5] == fb.FULL_FRAME_CROP
 
 
 def test_image_found_again_when_the_tab_reloads_mid_call(stack):
@@ -203,11 +224,11 @@ def test_image_found_again_when_the_tab_reloads_mid_call(stack):
     renders it anyway and the hub finds it in the listing by its client uuid."""
     c, flow = stack["client"], stack["flow"]
     flow.lose_next = "sent"
-    job = wait_job(c, c.post("/api/jobs", json={"type": "image", "prompt": "tab bị F5"}).json()["id"])
+    job = wait_job(c, c.post("/api/jobs", json={"type": "image", "prompt": "tab bị F5", "count": 2}).json()["id"])
     assert job["status"] == "done", job["error"]
-    media_id = job["results"][0]["media_id"]
-    assert media_id in flow.lost_images.values() and job["results"][0]["url"].endswith(f"{media_id}?u")
-    assert "PAGE_UNLOADED" in job["warnings"][0] and "đã lấy lại ảnh" in job["warnings"][0]
+    assert sorted(r["media_id"] for r in job["results"]) == flow.lost_images[-2:]
+    assert all(r["url"].endswith(f"{r['media_id']}?u") for r in job["results"])
+    assert "PAGE_UNLOADED" in job["warnings"][0] and "đã lấy lại 2 ảnh" in job["warnings"][0]
 
     before = len(flow.calls)
     flow.lose_next = "unsent"
@@ -245,10 +266,12 @@ def test_omni_t2v_360p_and_i2v_listing_fallback(stack):
 
 def test_upload_upscale_and_preview(stack):
     c = stack["client"]
-    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+    png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + (1024).to_bytes(4, "big") + (768).to_bytes(4, "big") + b"\x00" * 100
     job = c.post("/api/uploads", files={"file": ("a.png", png, "image/png")}).json()
     job = wait_job(c, job["id"])
     assert job["status"] == "done" and job["results"][0]["media_id"] == "UPL-1"
+    assert c.get(f"/api/jobs/{job['id']}").json()["rpc_log"][0]["captcha_action"] == "UPLOAD_IMAGE"
+    assert c.get("/api/media/UPL-1").json()["aspect"] == "1024:768"     # for the crop of a video made from it
     assert c.get("/api/media/UPL-1/file").content == png
     log = c.get(f"/api/jobs/{job['id']}").json()["rpc_log"][0]
     assert "<base64:" in log["body"]
@@ -318,3 +341,6 @@ def test_raw_rpc_and_validation(stack):
     assert c.post("/api/jobs", json={"type": "t2v"}).status_code == 400
     bad = c.post("/api/jobs", json={"type": "t2v", "prompt": "x", "family": "omni_flash", "duration": 12})
     assert bad.status_code == 400 and "không có biến thể" in bad.json()["detail"]
+    unknown = c.post("/api/jobs/preview", json={"type": "first_last", "prompt": "x", "family": "omni_flash",
+                                                "resolution": "360p", "start_media_id": "A", "end_media_id": "B"})
+    assert unknown.status_code == 400 and "360p" in unknown.json()["detail"]

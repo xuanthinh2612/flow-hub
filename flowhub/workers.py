@@ -3,7 +3,7 @@
 A worker is one Chrome profile with a signed-in flow.google.com tab. It dials
 in to /ws/worker?token=…, says hello, and from then on:
 
-  server → worker   {"type":"rpc", id, rpcid, freq, captcha_action, match, reqid}
+  server → worker   {"type":"rpc", id, rpcid, freq, captcha_action, match (str | [str]), reqid}
                     {"type":"fetch", id, url}            (media bytes fallback)
                     {"type":"config", observe:{enabled, responses}}
   worker → server   {"type":"rpc_result", id, status, text | error, matched}
@@ -234,7 +234,7 @@ class WorkerHub:
 
     # ── convenience used by the engine ──
     async def rpc(self, worker: Worker, rpcid: str, freq: str, captcha_action: Optional[str] = None,
-                  match: Optional[str] = None, timeout: float = 300) -> tuple[int, dict]:
+                  match: Optional[str | list[str]] = None, timeout: float = 300) -> tuple[int, dict]:
         reqid = self.new_reqid()
         result = await worker.call({"type": "rpc", "rpcid": rpcid, "freq": freq, "captcha_action": captcha_action,
                                     "match": match, "reqid": reqid}, timeout)

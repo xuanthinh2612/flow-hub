@@ -14,7 +14,8 @@ from the Observation page) and nothing else.
 
 Builders marked VERIFIED reproduce byte-for-byte requests captured from Flow's
 own UI on 2026-10-07 (build boq_labs-ai-sandbox-frontend_20261005.07_p0); see
-tests/test_protocol.py. The others come from older captures.
+tests/test_protocol.py. The others come from older captures (eb1hJf, SPrCad,
+maseQ past its first two slots).
 """
 from __future__ import annotations
 
@@ -23,7 +24,8 @@ import random
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from fractions import Fraction
+from typing import Any, Callable, Optional, Union
 
 BATCH_PATH = "/_/AiSandboxAngularFrontend/data/batchexecute"
 MEDIA_HOST = "flow-content.google"
@@ -31,8 +33,8 @@ MEDIA_HOST = "flow-content.google"
 RPC_GEN_IMAGE = "ogiZ0b"
 RPC_GEN_VIDEO = "eb1hJf"            # image-to-video: Veo, Omni first frame
 RPC_GEN_VIDEO_TEXT = "YhhmEf"       # text-to-video
-RPC_GEN_VIDEO_FIRST_LAST = "nprQif"
-RPC_GEN_VIDEO_REFERENCES = "MZZa6b"  # Omni ingredients
+RPC_GEN_VIDEO_FIRST_LAST = "nprQif"   # first + last frame: Omni, Veo Fast, Veo Lite
+RPC_GEN_VIDEO_REFERENCES = "MZZa6b"  # ingredients: Omni, Veo Fast
 RPC_OPERATION = "jwpduf"
 RPC_PROJECT_MEDIA = "Zzl0ze"
 RPC_MEDIA = "as29s"
@@ -58,6 +60,9 @@ RPC_NAMES: dict[str, str] = {
     "WuwhI": "Telemetry (sự kiện UI)",
     "o30O0e": "Hồ sơ người dùng (People API)",
     "mrlkwd": "Đọc project (khi mở)",
+    "C4BZMd": "Tạo Nhân vật (Character) trống",
+    "rzMKMb": "Sửa Nhân vật (field mask, vd. personality_notes)",
+    "eAenfb": "Trang Nhân vật: gợi ý theo chữ đang gõ (đoán)",
 }
 
 #: Read-only calls that Flow's page fires constantly.
@@ -65,12 +70,13 @@ POLL_RPCS = {RPC_OPERATION, RPC_PROJECT_MEDIA, RPC_MEDIA, "ngNC2", "nzlxg"}
 
 CAPTCHA_IMAGE = "IMAGE_GENERATION"
 CAPTCHA_VIDEO = "VIDEO_GENERATION"
+CAPTCHA_UPLOAD = "UPLOAD_IMAGE"
 
 #: Default reCAPTCHA action per RPC. The Observation page learns the action the
 #: page itself mints right before each RPC and that learned value wins.
 DEFAULT_CAPTCHA_ACTIONS: dict[str, str] = {
     RPC_GEN_IMAGE: CAPTCHA_IMAGE,
-    RPC_UPLOAD_IMAGE: CAPTCHA_IMAGE,
+    RPC_UPLOAD_IMAGE: CAPTCHA_UPLOAD,   # seen 2026-10-07: one mint per uploaded file
     RPC_UPSCALE_IMAGE: CAPTCHA_IMAGE,   # UNVERIFIED: the context carries a captcha slot
     RPC_GEN_VIDEO: CAPTCHA_VIDEO,
     RPC_GEN_VIDEO_TEXT: CAPTCHA_VIDEO,
@@ -85,8 +91,9 @@ SURFACE_ID = 22
 STATUS_DONE = "CAE"
 OUTCOME_COMPLAINT = 4
 
-#: Crop box the UI sends when nothing was reframed by hand.
-FULL_FRAME_CROP = [None, 0.0038759689922481244, 1, 0.9961240310077519]
+#: Frame crop box `[top, left, bottom, right]` (fractions, zero sent as null)
+#: when the image already has the video's shape.
+FULL_FRAME_CROP = [None, None, 1, 1]
 
 REF_TYPE_IMAGE = 1    # a reference image
 BASE_TYPE_IMAGE = 2   # the image being edited
@@ -97,10 +104,28 @@ VIDEO_PORTRAIT = 1
 VIDEO_LANDSCAPE = 2
 VIDEO_ASPECTS: dict[str, int] = {"9:16": VIDEO_PORTRAIT, "16:9": VIDEO_LANDSCAPE}
 
+VIDEO_RATIOS: dict[int, Fraction] = {VIDEO_PORTRAIT: Fraction(9, 16), VIDEO_LANDSCAPE: Fraction(16, 9)}
+
 IMAGE_UPSCALE_RESOLUTIONS = {"2K": 1, "4K": 2}
 
-#: Flow's UI starts image variants on this cadence (seconds), not as a burst.
-IMAGE_SUBMIT_OFFSETS_S = (0.0, 0.5, 1.5, 2.5)
+
+def center_crop(image_aspect: Optional[str], video_aspect: int) -> list:
+    """The centred, video-shaped window over a frame image, as the UI computes it:
+    a 16:9 image under a 9:16 video is `[null, 0.341796875, 1, 0.658203125]`.
+    Full frame when the image's aspect ("16:9", …) is unknown or already fits."""
+    try:
+        w, h = (int(x) for x in str(image_aspect).split(":"))
+        src = Fraction(w, h)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return list(FULL_FRAME_CROP)
+    dst = VIDEO_RATIOS.get(video_aspect)
+    if dst is None or src == dst:
+        return list(FULL_FRAME_CROP)
+    if src > dst:   # wider than the video: trim the sides
+        left = (1 - dst / src) / 2
+        return [None, float(left), 1, float(1 - left)]
+    top = (1 - src / dst) / 2
+    return [float(top), None, float(1 - top), 1]
 
 
 class FlowError(RuntimeError):
@@ -240,24 +265,39 @@ def client_ids() -> list:
     return [None, None, None, None, first, second]
 
 
-def image_request(prompt: str, project_id: str, aspect: int, model: str, seed: Optional[int] = None,
-                  ref_media_ids: Optional[list[str]] = None, base_media_id: Optional[str] = None) -> str:
-    """Image generate / edit (ogiZ0b). VERIFIED (BELUGA, 16:9, no refs).
+def image_request(prompts: Union[str, list[str]], project_id: str, aspect: int, model: str,
+                  seeds: Union[int, list[int], None] = None, ref_media_ids: Optional[list[str]] = None,
+                  base_media_id: Optional[str] = None, character_id: Optional[str] = None) -> str:
+    """Image generate / edit (ogiZ0b). VERIFIED for BELUGA, HARBOR_SEAL and
+    GEM_PIX_2, every aspect, 1/2/4 variants and a reference image.
 
-    One image per RPC: variants are separate calls (slot 4 is the aspect, not a
-    count). ``base_media_id`` makes it an edit: input type 2, references type 1.
+    Variants travel in ONE call, one item each (own prompt, seed and client
+    uuids) under a single captcha, as the page sends 2 or 4 images. Slot 4 of an
+    item is the aspect, not a count. ``base_media_id`` makes it an edit: input
+    type 2, references type 1. ``character_id`` files the images under one of
+    Flow's Characters: the trailing ids become `[uuid, null, [character_id, [0]]]`
+    (VERIFIED, HARBOR_SEAL from the character page).
     """
     if aspect not in (1, 2, 3, 4, 5):
         raise ValueError(f"image aspect must be 1-5, got {aspect}")
+    prompts = [prompts] if isinstance(prompts, str) else list(prompts)
+    if seeds is None:
+        seeds = [random_seed() for _ in prompts]
+    elif isinstance(seeds, int):
+        seeds = [seeds]
+    if not prompts or len(seeds) != len(prompts):
+        raise ValueError("image_request needs one seed per prompt")
     inputs = []
     if base_media_id:
         inputs.append([base_media_id, None, None, None, BASE_TYPE_IMAGE])
     inputs.extend([mid, None, None, None, REF_TYPE_IMAGE] for mid in (ref_media_ids or []) if mid != base_media_id)
-    item_seed = seed if seed is not None else random_seed()
-    first, second = client_uuid(), client_uuid()
-    item = [None, None, inputs or None, item_seed, aspect, model, None, context(project_id),
-            [[[prompt]]], None, None, None, first, second]
-    return build_envelope(RPC_GEN_IMAGE, [None, [item], 1, context(project_id), [client_uuid()]])
+    items = []
+    for prompt, seed in zip(prompts, seeds):
+        first, second = client_uuid(), client_uuid()
+        items.append([None, None, inputs or None, seed, aspect, model, None, context(project_id),
+                      [[[prompt]]], None, None, None, first, second])
+    ids = [client_uuid()] + ([None, [character_id, [0]]] if character_id else [])
+    return build_envelope(RPC_GEN_IMAGE, [None, items, 1, context(project_id), ids])
 
 
 def text_video_request(prompt: str, project_id: str, aspect: int, model: str) -> str:
@@ -288,7 +328,13 @@ def omni_first_frame_request(prompt: str, project_id: str, source_media_id: str,
 
 def first_last_request(prompt: str, project_id: str, start_media_id: str, end_media_id: str, aspect: int,
                        model: str, start_crop: Optional[list] = None, end_crop: Optional[list] = None) -> str:
-    """Omni first + last frame (nprQif). UNVERIFIED."""
+    """First + last frame (nprQif). VERIFIED for omni_flash_i2v_8s_first_last,
+    veo_3_1_i2v_s_fast_fl and veo_3_1_interpolation_lite. A 360p Omni key's
+    extra option slot is not known yet, so such a key is refused rather than
+    sent without it."""
+    if model.endswith("_360p"):
+        raise ValueError(f"{model}: chưa biết vị trí tuỳ chọn 360p của nprQif — tạo thử 1 video đầu+cuối 360p "
+                         "trên Flow (Observation sẽ ghi lại) hoặc dùng 720p / template")
     request = [prompt_block(prompt), model, aspect, None, frame_block(start_media_id, start_crop),
                frame_block(end_media_id, end_crop), client_ids()]
     return build_envelope(RPC_GEN_VIDEO_FIRST_LAST, [[request], context(project_id), [client_uuid(), 2]])
@@ -296,7 +342,8 @@ def first_last_request(prompt: str, project_id: str, start_media_id: str, end_me
 
 def reference_video_request(prompt: str, project_id: str, reference_media_ids: list[str], aspect: int,
                             model: str) -> str:
-    """Omni ingredients / reference-to-video (MZZa6b). UNVERIFIED."""
+    """Ingredients / reference-to-video (MZZa6b). VERIFIED for abra_r2v_6s_360p
+    and veo_3_1_r2v_fast_landscape, one reference image."""
     refs = [str(mid) for mid in reference_media_ids if mid]
     if not refs:
         raise ValueError("reference-to-video needs at least one reference image")
@@ -306,11 +353,12 @@ def reference_video_request(prompt: str, project_id: str, reference_media_ids: l
     return build_envelope(RPC_GEN_VIDEO_REFERENCES, [[request], context(project_id), [client_uuid(), 2]])
 
 
-def i2v_request(prompt: str, project_id: str, source_media_id: str, aspect: int, model: str) -> str:
+def i2v_request(prompt: str, project_id: str, source_media_id: str, aspect: int, model: str,
+                crop: Optional[list] = None) -> str:
     """eb1hJf, picking the Omni or Veo shape from the model key."""
     if model.startswith("abra_i2v"):
-        return omni_first_frame_request(prompt, project_id, source_media_id, aspect, model)
-    return veo_video_request(prompt, project_id, source_media_id, aspect, model)
+        return omni_first_frame_request(prompt, project_id, source_media_id, aspect, model, crop)
+    return veo_video_request(prompt, project_id, source_media_id, aspect, model, crop)
 
 
 def upload_request(image_b64: str, project_id: str, mime_type: str, file_name: str) -> str:
@@ -470,19 +518,32 @@ def find_media_id_in_text(text: str, operation_id: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
-def image_client_id(freq: str) -> Optional[str]:
-    """The request-level client uuid of an ogiZ0b body (its trailing `[uuid]`).
+def image_client_ids(freq: str) -> list[str]:
+    """Client uuids of an ogiZ0b body: the request's trailing `[uuid]` first,
+    then the two of every item.
 
-    Flow keeps it on the workflow right after the media id
-    (`[workflowId,null,null,[title,[ts],null,null,"<media id>","<client uuid>",…]]`),
-    which is how an image whose response was lost is found again in the listing.
+    Flow keeps the request's uuid on the workflow right after the media id
+    (`[workflowId,null,null,[title,[ts],null,null,"<media id>","<client uuid>",…]]`,
+    seen for a one-image call), which is how an image whose response was lost
+    is found again in the listing. Which uuid each image of a multi-item call
+    carries is not known yet, so all of them are looked for.
     """
     inner = decode_envelope(freq)[0][1]
+    out: list[str] = []
     ids = inner[4] if isinstance(inner, list) and len(inner) > 4 else None
-    return ids[0] if isinstance(ids, list) and ids and isinstance(ids[0], str) else None
+    if isinstance(ids, list) and ids and isinstance(ids[0], str):
+        out.append(ids[0])
+    for item in (inner[1] if isinstance(inner, list) and len(inner) > 1 and isinstance(inner[1], list) else []):
+        if isinstance(item, list):
+            out.extend(x for x in item[12:14] if isinstance(x, str))
+    return out
 
 
-def find_media_id_before(text: str, client_id: str) -> Optional[str]:
-    """Media id stored just ahead of a request's client uuid in the (windowed) listing text."""
-    match = re.search(r'\\?"([0-9a-fA-F-]{36})\\?",\\?"' + re.escape(client_id), text)
-    return match.group(1) if match else None
+def find_media_ids_before(text: str, client_ids: list[str]) -> list[str]:
+    """Media ids stored just ahead of any of a request's client uuids in the
+    (windowed) listing text, in the order they appear."""
+    if not client_ids:
+        return []
+    marker = "|".join(re.escape(c) for c in client_ids)
+    found = re.findall(r'\\?"([0-9a-fA-F-]{36})\\?",\\?"(?:' + marker + ")", text)
+    return list(dict.fromkeys(found))

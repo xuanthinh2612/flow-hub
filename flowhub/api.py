@@ -94,6 +94,7 @@ class JobCreate(BaseModel):
     base_media_id: Optional[str] = None
     media_id: Optional[str] = None
     character: Optional[dict] = Field(None, description="{gender, country, vibe, extras}")
+    character_id: Optional[str] = Field(None, description="ảnh: gắn vào một Nhân vật (Character) có sẵn trên Flow")
     template_id: Optional[int] = None
     variables: Optional[dict] = None
     project_id: Optional[str] = None

@@ -120,16 +120,17 @@ export const imagePage = {
     picker = modelPicker('image', form, () => form.family, (v) => { form.family = v; }, save, refresh);
     const baseField = field(h('span', null, 'Ảnh gốc cần sửa ', h('span', { class: 'tag' }, 'BASE_IMAGE · type 2')),
       mediaPicker({ value: form.base, onChange: (v) => { form.base = v; save(); } }));
-    const countField = field('Số ảnh (mỗi ảnh = 1 request + 1 captcha)', chipGroup(COUNTS, form.count, (v) => { form.count = v; save(); }));
+    const countField = field('Số ảnh (tất cả trong 1 request + 1 captcha)', chipGroup(COUNTS, form.count, (v) => { form.count = v; save(); }));
     const variantField = field('Prompt riêng từng biến thể (mỗi dòng 1 prompt)',
       h('textarea', { class: 'input', rows: 3, value: form.perVariant, oninput: (e) => { form.perVariant = e.target.value; save(); } }));
     const sync = () => { baseField.hidden = form.mode !== 'edit'; countField.hidden = form.mode === 'edit'; variantField.hidden = form.mode === 'edit'; };
     const spec = () => ({ type: form.mode === 'edit' ? 'edit' : 'image', prompt: form.prompt, ...modelSpec(form, picker),
       aspect: form.aspect, count: form.count, seed: form.seed === '' || form.seed === null ? null : Number(form.seed),
       prompts: form.mode === 'edit' ? null : (lines(form.perVariant).length ? lines(form.perVariant) : null),
-      ref_media_ids: form.refs, base_media_id: form.mode === 'edit' ? form.base : null });
+      ref_media_ids: form.refs, base_media_id: form.mode === 'edit' ? form.base : null,
+      character_id: (form.characterId || '').trim() || null });
     const recent = recentPanel(['image', 'edit']);
-    root.append(pageHead('Tạo ảnh', 'ogiZ0b — tạo mới hoặc sửa ảnh, có ảnh tham chiếu. Mỗi biến thể là một request riêng như giao diện Flow.'),
+    root.append(pageHead('Tạo ảnh', 'ogiZ0b — tạo mới hoặc sửa ảnh, có ảnh tham chiếu. Các biến thể đi chung một request, như giao diện Flow.'),
       h('div', { class: 'cols' }, h('div', { class: 'card' },
         chipGroup([{ value: 'gen', label: 'Tạo ảnh' }, { value: 'edit', label: 'Chỉnh sửa ảnh' }], form.mode,
           (v) => { form.mode = v; save(); sync(); }, { cls: 'seg' }),
@@ -144,7 +145,10 @@ export const imagePage = {
         h('details', { class: 'adv' }, h('summary', null, 'Nâng cao'),
           field('Seed (trống = ngẫu nhiên; mỗi biến thể +9973)', h('input', { class: 'input mono', type: 'number', value: form.seed,
             oninput: (e) => { form.seed = e.target.value; save(); } })),
-          variantField),
+          variantField,
+          field('Character ID (gắn ảnh vào một Nhân vật đã tạo trên Flow — id trong URL …/character/<id>)',
+            h('input', { class: 'input mono', value: form.characterId || '', placeholder: 'bd55770a-…',
+              oninput: (e) => { form.characterId = e.target.value; save(); } }))),
         ...actionsRow('Tạo ảnh', spec)), recent.el));
     sync();
     recent.load();

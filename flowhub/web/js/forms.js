@@ -3,7 +3,7 @@ import { loadPref, savePref } from './core.js';
 
 export const DEFAULTS = {
   image: { mode: 'gen', prompt: '', family: null, customModel: '', useCustom: false, aspect: '16:9', count: 1,
-    seed: '', perVariant: '', refs: [], base: null },
+    seed: '', perVariant: '', refs: [], base: null, characterId: '' },
   character: { gender: null, country: null, vibe: 'clean', extras: '', prompt: '', promptEdited: false,
     family: null, customModel: '', useCustom: false, aspect: '1:1', count: 1 },
   video: { mode: 't2v', prompt: '', families: {}, customModel: '', useCustom: false, aspect: '16:9', count: 1,
@@ -26,6 +26,7 @@ export function reuseSpec(spec) {
     Object.assign(form, { mode: spec.type === 'edit' ? 'edit' : 'gen', prompt: spec.prompt || '', aspect: spec.aspect || '16:9',
       count: spec.count || 1, seed: spec.seed ?? '', perVariant: (spec.prompts || []).join('\n'),
       refs: spec.ref_media_ids || [], base: spec.base_media_id || null, family: spec.family || null,
+      characterId: spec.character_id || '',
       useCustom: !spec.family, customModel: spec.family ? '' : (model || '') });
   } else if (page === 'character') {
     const c = spec.character || {};
