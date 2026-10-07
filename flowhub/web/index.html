@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flow Hub</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-name">Flow Hub</span>
+        <span class="pill" id="worker-pill" title="Worker (extension) đang kết nối">…</span>
+      </div>
+      <nav id="nav">
+        <a href="#/overview" data-route="overview">Tổng quan <span class="badge" id="alerts-badge"></span></a>
+        <div class="nav-group">Tạo</div>
+        <a href="#/image" data-route="image">Ảnh</a>
+        <a href="#/character" data-route="character">Nhân vật</a>
+        <a href="#/video" data-route="video">Video</a>
+        <a href="#/library" data-route="library">Thư viện</a>
+        <a href="#/jobs" data-route="jobs">Jobs <span class="badge" id="jobs-badge"></span></a>
+        <div class="nav-group">Quan sát &amp; cập nhật</div>
+        <a href="#/observe" data-route="observe">Observation</a>
+        <a href="#/models" data-route="models">Models</a>
+        <a href="#/templates" data-route="templates">Templates &amp; RPC</a>
+        <div class="nav-group">Hệ thống</div>
+        <a href="#/settings" data-route="settings">Cài đặt</a>
+        <a href="/docs" target="_blank" rel="noopener">API docs ↗</a>
+      </nav>
+    </aside>
+    <main id="view"></main>
+  </div>
+
+  <dialog class="modal" id="modal">
+    <div class="modal-inner">
+      <header class="modal-head"><span id="modal-title"></span><button class="btn btn-ghost btn-sm" id="modal-close">✕</button></header>
+      <div id="modal-body"></div>
+    </div>
+  </dialog>
+  <div class="toasts" id="toasts"></div>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

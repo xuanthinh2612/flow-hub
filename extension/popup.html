@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <title>Flow Hub Worker</title>
+  <style>
+    :root { --bg:#121419; --surface:#1a1d25; --border:#2c3140; --text:#e6e8ec; --muted:#8a92a6; --accent:#7c9cff;
+            --ok:#4ade80; --warn:#f5b301; --err:#f87171; color-scheme: dark; }
+    @media (prefers-color-scheme: light) {
+      :root { --bg:#f6f7f9; --surface:#fff; --border:#d9dde5; --text:#1b1f2a; --muted:#616a7d; --accent:#3b5bdb;
+              --ok:#15803d; --warn:#b45309; --err:#dc2626; color-scheme: light; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; width: 320px; background: var(--bg); color: var(--text);
+           font: 13px/1.45 "Segoe UI", Roboto, "Noto Sans", Arial, sans-serif; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px;
+             border-bottom: 1px solid var(--border); }
+    header b { font-size: 14px; }
+    .pill { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--surface); }
+    .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
+    section { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; font-size: 12px; }
+    dt { color: var(--muted); } dd { margin: 0; word-break: break-all; }
+    label { display: block; font-size: 12px; font-weight: 600; margin: 8px 0 4px; }
+    input { width: 100%; background: var(--surface); color: var(--text); border: 1px solid var(--border);
+            border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 12px; }
+    input:focus { outline: none; border-color: var(--accent); }
+    .row { display: flex; gap: 6px; margin-top: 10px; }
+    button { flex: 1; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+             padding: 6px 8px; font: inherit; font-size: 12px; cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #0d1020; font-weight: 600; }
+    .hint { color: var(--muted); font-size: 11px; margin: 6px 0 0; }
+    .error { color: var(--err); font-size: 12px; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <header><b>Flow Hub Worker</b><span class="pill" id="state">…</span></header>
+  <section>
+    <dl>
+      <dt>Worker ID</dt><dd id="worker-id">—</dd>
+      <dt>Tab Flow</dt><dd id="flow">—</dd>
+      <dt>Project</dt><dd id="project">—</dd>
+      <dt>RPC đã chạy</dt><dd id="rpcs">0</dd>
+      <dt>Đã quan sát</dt><dd id="observed">0</dd>
+    </dl>
+    <div class="error" id="error" hidden></div>
+  </section>
+  <section>
+    <label for="server">URL WebSocket của server</label>
+    <input id="server" placeholder="ws://127.0.0.1:8787/ws/worker" spellcheck="false">
+    <label for="token">Token ghép nối <span class="hint" id="token-hint"></span></label>
+    <input id="token" type="password" placeholder="dán token từ Cài đặt của server" spellcheck="false">
+    <label for="label">Tên worker</label>
+    <input id="label" placeholder="VD: Chrome nhà / tài khoản A">
+    <div class="row">
+      <button class="primary" id="save">Lưu &amp; kết nối</button>
+      <button id="reconnect">Kết nối lại</button>
+    </div>
+    <div class="row">
+      <button id="open-flow">Mở Flow</button>
+      <button id="open-dashboard">Mở dashboard</button>
+    </div>
+    <p class="hint">Token và URL lấy ở trang <b>Cài đặt</b> trên dashboard của server.</p>
+  </section>
+  <script src="popup.js"></script>
+</body>
+</html>

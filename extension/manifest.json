@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Flow Hub Worker",
+  "version": "1.0.1",
+  "description": "Worker for a Flow Hub server: runs Google Flow requests inside your signed-in flow.google.com tab and reports what the page sends.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "storage",
+    "alarms",
+    "tabs",
+    "scripting",
+    "webRequest",
+    "debugger"
+  ],
+  "host_permissions": [
+    "https://flow.google.com/*",
+    "https://flow-content.google/*",
+    "https://www.google.com/recaptcha/*",
+    "https://www.recaptcha.net/recaptcha/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Flow Hub Worker",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://flow.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://flow.google.com/*"],
+      "js": ["injected.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["injected.js"],
+      "matches": ["https://flow.google.com/*"]
+    }
+  ]
+}
