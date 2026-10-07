@@ -1,0 +1,18 @@
+services:
+  flow-hub:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${FLOWHUB_PORT:-8787}:8787"
+    environment:
+      FLOWHUB_HOST: 0.0.0.0
+      FLOWHUB_PORT: 8787
+      FLOWHUB_DATA_DIR: /app/data
+      FLOWHUB_AUTH: ${FLOWHUB_AUTH:-auto}
+      FLOWHUB_WORKER_TOKEN: ${FLOWHUB_WORKER_TOKEN:-}
+      FLOWHUB_API_KEY: ${FLOWHUB_API_KEY:-}
+    volumes:
+      - flowhub_data:/app/data
+
+volumes:
+  flowhub_data:
