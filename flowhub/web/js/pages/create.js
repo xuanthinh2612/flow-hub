@@ -46,10 +46,37 @@ function modelPicker(mode, form, getFamily, setFamily, save, onChange) {
   return state;
 }
 
+function getVideoCreditCost(key, duration, resolution) {
+  if (!key || key === '?') return 'không xác định';
+  key = key.toLowerCase();
+  if (key.includes('omni_flash') || key.includes('abra')) {
+    const d = duration || parseInt(key.match(/_(\d+)s/)?.[1]) || 0;
+    const res = resolution || (key.includes('360p') ? '360p' : '720p');
+    if (res === '360p') {
+      if (d === 4) return 4;
+      if (d === 6) return 5;
+      if (d === 8) return 6;
+      if (d === 10) return 7;
+    } else {
+      if (d === 4) return 7;
+      if (d === 6) return 10;
+      if (d === 8) return 12;
+      if (d === 10) return 15;
+    }
+  }
+  if (key.includes('veo_3_1_') && key.includes('_lite')) return 10;
+  if (key.includes('veo_3_1_') && key.includes('_fast')) return 20;
+  return 'không xác định';
+}
+
 async function resolveLine(line, mode, picker, form, extra = {}) {
   if (form.useCustom) {
     line.className = 'model-line';
-    line.textContent = `→ ${form.customModel || '?'} (wire id tự nhập)`;
+    let text = `→ ${form.customModel || '?'} (wire id tự nhập)`;
+    if (['t2v', 'i2v', 'first_last', 'r2v'].includes(mode)) {
+      text += ` • 💳 Tín dụng: ${getVideoCreditCost(form.customModel, extra.duration, extra.resolution)}`;
+    }
+    line.textContent = text;
     return;
   }
   const q = new URLSearchParams({ mode, ...(picker.family() ? { family: picker.family() } : {}) });
@@ -57,7 +84,11 @@ async function resolveLine(line, mode, picker, form, extra = {}) {
   try {
     const r = await api(`/api/models/resolve?${q}`);
     line.className = `model-line${r.status === 'verified' ? '' : ' warn'}`;
-    line.textContent = `→ ${r.key} · ${r.status === 'verified' ? 'đã xác minh' : 'CHƯA xác minh trên Flow hiện tại'}${r.note ? ` · ${r.note}` : ''}`;
+    let text = `→ ${r.key}`;
+    if (['t2v', 'i2v', 'first_last', 'r2v'].includes(mode)) {
+      text += ` • 💳 Tín dụng: ${getVideoCreditCost(r.key, r.duration || extra.duration, r.resolution || extra.resolution)}`;
+    }
+    line.textContent = text;
   } catch (e) {
     line.className = 'model-line err';
     line.textContent = e.message;

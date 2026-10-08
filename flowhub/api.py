@@ -156,6 +156,11 @@ async def delete_job(job_id: str, request: Request):
     core_of(request).jobs.delete(job_id)
     return {"ok": True}
 
+@api.delete("/jobs", tags=["jobs"])
+async def clear_jobs(request: Request):
+    core_of(request).jobs.clear()
+    return {"ok": True}
+
 
 @api.post("/uploads", tags=["media"], status_code=201)
 async def upload(request: Request, file: UploadFile = File(...), project_id: Optional[str] = Form(None)):
@@ -231,6 +236,11 @@ async def refresh_media(media_id: str, request: Request):
 @api.delete("/media/{media_id}", tags=["media"])
 async def delete_media(media_id: str, request: Request):
     core_of(request).media.delete(media_id)
+    return {"ok": True}
+
+@api.delete("/media", tags=["media"])
+async def clear_media(request: Request):
+    core_of(request).media.clear()
     return {"ok": True}
 
 

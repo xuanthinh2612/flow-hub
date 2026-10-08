@@ -93,9 +93,18 @@ export default {
         e.target.value = '';
       } });
     const idInput = h('input', { class: 'input mono', placeholder: 'media ID có sẵn trong project Flow', spellcheck: 'false' });
+    const btnClear = h('button', { class: 'btn btn-sm btn-danger', onclick: async () => {
+      if (!confirm('Xóa tất cả media trong thư viện?')) return;
+      try {
+        await api('/api/media', { method: 'DELETE' });
+        invalidateMedia();
+        toast('Đã xóa toàn bộ thư viện', 'ok');
+        load();
+      } catch (e) { toast(e.message, 'err'); }
+    } }, 'Xóa toàn bộ');
     root.append(
       h('div', { class: 'page-head' }, h('div', null, h('h1', null, 'Thư viện'),
-        h('p', null, 'Mọi ảnh / video đã tạo, upload hoặc thêm bằng ID. Bấm vào để xem, tải, upscale hoặc dùng làm tham chiếu.'))),
+        h('p', null, 'Mọi ảnh / video đã tạo, upload hoặc thêm bằng ID. Bấm vào để xem, tải, upscale hoặc dùng làm tham chiếu.')), btnClear),
       h('div', { class: 'card' }, h('div', { class: 'inline' },
         h('label', { class: 'btn btn-primary' }, 'Tải ảnh lên Flow', file), idInput,
         h('button', { class: 'btn', onclick: async () => {

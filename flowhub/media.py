@@ -129,6 +129,16 @@ class MediaStore:
                 pass
         self.db.execute("DELETE FROM media WHERE id=?", (media_id,))
 
+    def clear(self) -> None:
+        rows = self.db.all("SELECT local_path FROM media WHERE local_path IS NOT NULL")
+        for row in rows:
+            try:
+                Path(row["local_path"]).unlink(missing_ok=True)
+            except OSError:
+                pass
+        self.db.execute("DELETE FROM media")
+        self.events.publish("media", {"deleted_all": True})
+
     def local_file(self, media_id: str) -> Optional[Path]:
         row = self.get(media_id)
         if row and row.get("local_path") and Path(row["local_path"]).is_file():

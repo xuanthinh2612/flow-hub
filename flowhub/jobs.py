@@ -329,6 +329,14 @@ class JobEngine:
         self.db.execute("DELETE FROM rpc_log WHERE job_id=?", (job_id,))
         self.events.publish("job", {"id": job_id, "deleted": True})
 
+    def clear(self) -> None:
+        for task in self.tasks.values():
+            task.cancel()
+        self.tasks.clear()
+        self.db.execute("DELETE FROM jobs")
+        self.db.execute("DELETE FROM rpc_log")
+        self.events.publish("job", {"deleted_all": True})
+
     # ── persistence ──
     def _brief(self, job: Optional[dict]) -> dict:
         if not job:

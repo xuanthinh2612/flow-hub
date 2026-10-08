@@ -80,15 +80,15 @@ const reuseSpecPossible = (job) => ['image', 'edit', 'character', 't2v', 'i2v', 
 
 export function jobTable(jobs) {
   if (!jobs.length) return h('p', { class: 'empty' }, 'Chưa có job nào.');
-  return h('table', { class: 'list' },
+  return h('div', { style: { overflowX: 'auto' } }, h('table', { class: 'list' },
     h('tr', null, ...['Thời gian', 'Loại', 'Model', 'Prompt', 'Trạng thái', ''].map((t) => h('th', null, t))),
     ...jobs.map((j) => h('tr', { class: 'click', onclick: () => openJob(j.id) },
       h('td', { class: 'muted', style: { whiteSpace: 'nowrap' } }, ago(j.created_at)),
-      h('td', null, typeLabel(j.type)),
-      h('td', { class: 'mono' }, j.model || ''),
-      h('td', null, h('div', { class: 'clamp' }, j.prompt || '')),
+      h('td', { style: { whiteSpace: 'nowrap' } }, typeLabel(j.type)),
+      h('td', { class: 'mono', style: { maxWidth: '130px', wordBreak: 'break-all' } }, j.model || ''),
+      h('td', { style: { maxWidth: '160px' } }, h('div', { class: 'clamp' }, j.prompt || '')),
       h('td', null, statusPill(j.status), j.error ? h('div', { class: 'err clamp', style: { fontSize: '12px' } }, j.error) : null),
-      h('td', null, resultThumbs(j)))));
+      h('td', null, resultThumbs(j))))));
 }
 
 export default {
@@ -107,8 +107,16 @@ export default {
       class: `chip${c === filter ? ' active' : ''}`,
       onclick: (e) => { filter = c; [...seg.children].forEach((b) => b.classList.remove('active')); e.target.classList.add('active'); load(); },
     }, c === 'all' ? 'Tất cả' : c === 'active' ? 'Đang chạy' : c)));
+    const btnClear = h('button', { class: 'btn btn-sm btn-danger', onclick: async () => {
+      if (!confirm('Xóa tất cả jobs?')) return;
+      try {
+        await api('/api/jobs', { method: 'DELETE' });
+        toast('Đã xóa tất cả', 'ok');
+        load();
+      } catch (e) { toast(e.message, 'err'); }
+    } }, 'Xóa tất cả');
     root.append(h('div', { class: 'page-head' }, h('div', null, h('h1', null, 'Jobs'),
-      h('p', null, 'Mọi lệnh tạo đã gửi qua worker. Bấm một dòng để xem body, response và trạng thái từng operation.'))), seg, list);
+      h('p', null, 'Mọi lệnh tạo đã gửi qua worker. Bấm một dòng để xem body, response và trạng thái từng operation.')), btnClear), seg, list);
     load();
     this._reload = debounce(load, 500);
   },
