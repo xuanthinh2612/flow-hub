@@ -35,7 +35,7 @@ nav a:hover { background: var(--surface); }
 nav a.active { background: var(--surface-2); font-weight: 600; }
 .nav-group { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
   padding: 14px 10px 4px; }
-main { padding: 20px 24px 60px; min-width: 0; max-width: 1180px; }
+main { padding: 20px 220px 60px 24px; min-width: 0; }
 h1 { font-size: 20px; margin: 0 0 4px; }
 .page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-bottom: 16px;
   flex-wrap: wrap; }

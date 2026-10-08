@@ -10,6 +10,7 @@ import json
 import secrets
 from typing import Any, Literal, Optional
 
+from fastapi.security import APIKeyHeader
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
@@ -25,11 +26,13 @@ def core_of(request: Request):
     return request.app.state.core
 
 
-def require_key(request: Request) -> None:
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+def require_key(request: Request, header_key: Optional[str] = Depends(api_key_header)) -> None:
     core = core_of(request)
     if not core.config.auth_enabled:
         return
-    key = request.headers.get("x-api-key") or request.query_params.get("key") or ""
+    key = header_key or request.headers.get("x-api-key") or request.query_params.get("key") or ""
     if not key or not secrets.compare_digest(key, core.api_key):
         raise HTTPException(401, "Thiếu hoặc sai API key (header X-API-Key)")
 
