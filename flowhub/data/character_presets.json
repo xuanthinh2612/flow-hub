@@ -1,0 +1,20 @@
+{
+  "genders": [
+    {"key": "female", "label": "Nữ", "tag": "woman"},
+    {"key": "male", "label": "Nam", "tag": "man"}
+  ],
+  "countries": [
+    {"key": "vietnam", "label": "Việt Nam", "tag": "Vietnamese"},
+    {"key": "japan", "label": "Nhật Bản", "tag": "Japanese"},
+    {"key": "korea", "label": "Hàn Quốc", "tag": "Korean"},
+    {"key": "china", "label": "Trung Quốc", "tag": "Chinese"},
+    {"key": "western", "label": "Phương Tây", "tag": "Caucasian"},
+    {"key": "india", "label": "Ấn Độ", "tag": "Indian"}
+  ],
+  "vibes": [
+    {"key": "clean", "label": "Studio / Cơ bản", "tokens": ["clean aesthetic", "neutral expression", "natural soft lighting", "solid neutral background", "casual neat clothing"]},
+    {"key": "business", "label": "Công sở", "tokens": ["business attire", "professional look", "confident expression", "office studio lighting", "solid grey background"]},
+    {"key": "cinematic", "label": "Điện ảnh", "tokens": ["cinematic lighting", "dramatic shadows", "serious expression", "dark background"]},
+    {"key": "fashion", "label": "Thời trang", "tokens": ["high fashion", "stylish clothing", "vogue editorial lighting", "striking features"]}
+  ]
+}
