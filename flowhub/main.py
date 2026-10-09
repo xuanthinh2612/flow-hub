@@ -19,9 +19,20 @@ from .media import MediaStore
 from .observations import Alerts, ObservationStore
 from .templates import TemplateStore
 from .workers import WorkerHub
-
 log = logging.getLogger("flowhub")
-WEB_DIR = Path(__file__).parent / "web"
+
+
+def get_web_dir() -> Path:
+    bundled = Path(__file__).parent / "web_dist"
+    if (bundled / "index.html").is_file():
+        return bundled
+    local_dist = Path(__file__).parent.parent / "frontend" / "dist"
+    if (local_dist / "index.html").is_file():
+        return local_dist
+    return Path(__file__).parent / "web"
+
+
+WEB_DIR = get_web_dir()
 
 
 class Core:
@@ -103,5 +114,7 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
     async def worker_socket(ws: WebSocket):
         await core.hub.handle(ws)
 
-    app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
+    web_dir = get_web_dir()
+    log.info("Serving web dashboard from %s", web_dir)
+    app.mount("/", StaticFiles(directory=str(web_dir), html=True), name="web")
     return app

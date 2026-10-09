@@ -10,3 +10,5 @@ data/
 tests/
 extension/
 requirements-dev.txt
+frontend/node_modules/
+frontend/dist/
