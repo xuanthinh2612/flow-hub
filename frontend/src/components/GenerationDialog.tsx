@@ -748,7 +748,11 @@ export function GenerationDialog() {
       // 1. Text-to-Video (không có node nối trước) / Independent Video
       if (videoInfo?.mode === "t2v") {
         const dbId = parseInt(rfId, 10);
-        const actualMode = independentVideoMediaIds.length > 0 ? independentVideoMode : "t2v";
+        const actualMode = independentVideoMediaIds.length > 1 
+          ? "r2v" 
+          : independentVideoMediaIds.length === 1 
+            ? independentVideoMode 
+            : "t2v";
 
         // Save selected media to node data so it's restored next time
         useBoardStore.getState().updateNodeData(rfId, { 
@@ -1092,7 +1096,7 @@ export function GenerationDialog() {
               <div className="source-info-box__content" style={{ width: '100%' }}>
                 <div className="gen-dialog__label-row">
                   <span className="source-info-box__title">Chế độ: Text/Image to Video</span>
-                  {independentVideoMediaIds.length > 0 && (
+                  {independentVideoMediaIds.length === 1 && (
                     <select
                       className="source-select-mini"
                       value={independentVideoMode}
@@ -1103,6 +1107,11 @@ export function GenerationDialog() {
                       <option value="i2v">Nối tiếp (i2v)</option>
                       <option value="r2v">Ingredients (r2v)</option>
                     </select>
+                  )}
+                  {independentVideoMediaIds.length > 1 && (
+                    <span className="source-select-mini" style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fff', border: 'none', display: 'inline-block' }}>
+                      Ingredients (r2v)
+                    </span>
                   )}
                 </div>
                 <div style={{ marginTop: 10 }}>
