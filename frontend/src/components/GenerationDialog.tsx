@@ -253,6 +253,10 @@ export function GenerationDialog() {
   const [t2vLibraryMediaId, setT2vLibraryMediaId] = useState<string | null>(null);
   const [t2vLibraryMediaItem, setT2vLibraryMediaItem] = useState<MediaItem | null>(null);
 
+  const [independentVideoMediaIds, setIndependentVideoMediaIds] = useState<string[]>([]);
+  const [independentVideoMode, setIndependentVideoMode] = useState<"i2v" | "r2v">("i2v");
+  const [connectedVideoMode, setConnectedVideoMode] = useState<"i2v" | "r2v">("i2v");
+
   const dialogRef = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLTextAreaElement>(null);
   const triggerRef = useRef<Element | null>(null);
@@ -351,7 +355,7 @@ export function GenerationDialog() {
   // Both image targets AND Omni-video targets use the ingredient chip
   // list (multi-ref upstream → one chip per edge). Veo i2v video has
   // its own single-source-with-variant-batch picker below.
-  const promptSourceNodes = (!isVideo || isOmniVideo) && rfId
+  const promptSourceNodes = (!isVideo || isOmniVideo || videoInfo?.mode === "r2v" || (videoInfo?.mode === "i2v" && connectedVideoMode === "r2v")) && rfId
     ? edges
         .filter((e) => e.target === rfId)
         .map((e) => {
@@ -363,7 +367,7 @@ export function GenerationDialog() {
         .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     : [];
 
-  const refSourceNodes = (!isVideo || isOmniVideo) && rfId
+  const refSourceNodes = (!isVideo || isOmniVideo || videoInfo?.mode === "r2v" || (videoInfo?.mode === "i2v" && connectedVideoMode === "r2v")) && rfId
     ? edges
         .filter((e) => e.target === rfId)
         .map((e) => {
@@ -476,6 +480,11 @@ export function GenerationDialog() {
         upstreamNode?.data.mediaIds ??
         (upstreamNode?.data.mediaId ? [upstreamNode.data.mediaId] : []);
       setSelectedSourceIdx(new Set(ups.map((_, i) => i)));
+      
+      setIndependentVideoMediaIds((openNodeData?.independentMediaIds as string[]) || []);
+      setIndependentVideoMode((openNodeData?.independentVideoMode as "i2v" | "r2v") || "i2v");
+      setConnectedVideoMode((openNodeData?.connectedVideoMode as "i2v" | "r2v") || "i2v");
+      
       triggerRef.current = document.activeElement;
       // Focus textarea on open
       setTimeout(() => firstFocusRef.current?.focus(), 50);
@@ -732,59 +741,34 @@ export function GenerationDialog() {
         ? `${finalPrompt}. ${camInstruction}`
         : finalPrompt;
 
-      // 1. Text-to-Video (không có node nối trước)
+      // 1. Text-to-Video (không có node nối trước) / Independent Video
       if (videoInfo?.mode === "t2v") {
         const dbId = parseInt(rfId, 10);
-        if (t2vLibraryMediaId) {
-          if (t2vLibraryMediaItem?.kind === "video") {
-            // Extact frame in background
-            useBoardStore.getState().updateNodeData(rfId, { extractingFrame: true, extractError: null, t2vSourceId: null });
-            closeGenerationDialog();
+        const actualMode = independentVideoMediaIds.length > 0 ? independentVideoMode : "t2v";
 
-            extractAndUploadLastFrame(t2vLibraryMediaId).then((lastFrameMediaId) => {
-              useBoardStore.getState().updateNodeData(rfId, { extractingFrame: false, t2vSourceId: lastFrameMediaId });
-              if (!isNaN(dbId)) patchNode(dbId, { data: { t2vSourceId: lastFrameMediaId } }).catch(() => {});
-              
-              dispatchGeneration(rfId, {
-                prompt: videoPrompt,
-                aspectRatio,
-                kind: "video",
-                sourceMediaId: lastFrameMediaId,
-                variantCount: 1,
-              });
-            }).catch((err: any) => {
-              const msg = err?.message || "Lỗi khi trích xuất frame cuối của video";
-              useBoardStore.getState().updateNodeData(rfId, { extractingFrame: false, extractError: msg });
-              useGenerationStore.setState({
-                error: `Lỗi trích xuất frame cuối: ${msg}`,
-              });
-            });
-          } else {
-            // kind === image (hoặc ko rõ), act as i2v
-            useBoardStore.getState().updateNodeData(rfId, { t2vSourceId: t2vLibraryMediaId });
-            if (!isNaN(dbId)) patchNode(dbId, { data: { t2vSourceId: t2vLibraryMediaId } }).catch(() => {});
-
-            dispatchGeneration(rfId, {
-              prompt: videoPrompt,
-              aspectRatio,
-              kind: "video",
-              sourceMediaId: t2vLibraryMediaId,
-              variantCount: 1,
-            });
-            closeGenerationDialog();
-          }
-        } else {
-          useBoardStore.getState().updateNodeData(rfId, { t2vSourceId: null });
-          if (!isNaN(dbId)) patchNode(dbId, { data: { t2vSourceId: null } }).catch(() => {});
-
-          dispatchGeneration(rfId, {
-            prompt: videoPrompt,
-            aspectRatio,
-            kind: "video",
-            variantCount: 1,
-          });
-          closeGenerationDialog();
+        // Save selected media to node data so it's restored next time
+        useBoardStore.getState().updateNodeData(rfId, { 
+          independentMediaIds: independentVideoMediaIds,
+          independentVideoMode: independentVideoMode 
+        });
+        if (!isNaN(dbId)) {
+          patchNode(dbId, { 
+            data: { 
+              independentMediaIds: independentVideoMediaIds,
+              independentVideoMode: independentVideoMode 
+            } 
+          }).catch(() => {});
         }
+
+        dispatchGeneration(rfId, {
+          prompt: videoPrompt,
+          aspectRatio,
+          kind: "video",
+          videoMode: actualMode,
+          sourceMediaIds: independentVideoMediaIds.length > 0 ? independentVideoMediaIds : undefined,
+          variantCount: variants,
+        });
+        closeGenerationDialog();
         return;
       }
 
@@ -817,20 +801,27 @@ export function GenerationDialog() {
         return;
       }
 
-      // 3. Ảnh -> Video (i2v)
-      // Filter the upstream variants to the user's selection — the dialog
-      // shows one toggleable thumbnail per variant + an All/None action.
+      // 3. Ảnh -> Video (i2v hoặc r2v)
+      // Filter the upstream variants to the user's selection
       const picked = sourceMediaIds.filter((_, i) => selectedSourceIdx.has(i));
       const useMulti = picked.length > 1;
+      const actualConnectedMode = videoInfo?.mode === "i2v" ? connectedVideoMode : videoInfo?.mode;
+
+      if (videoInfo?.mode === "i2v") {
+        const dbId = parseInt(rfId, 10);
+        useBoardStore.getState().updateNodeData(rfId, { connectedVideoMode });
+        if (!isNaN(dbId)) {
+          patchNode(dbId, { data: { connectedVideoMode } }).catch(() => {});
+        }
+      }
+
       dispatchGeneration(rfId, {
         prompt: videoPrompt,
         aspectRatio,
         kind: "video",
+        videoMode: actualConnectedMode,
         sourceMediaId: useMulti ? undefined : picked[0],
         sourceMediaIds: useMulti ? picked : undefined,
-        // Tell the node UI how many video tiles to reserve while pending —
-        // otherwise it defaults to 1 placeholder even though we're
-        // dispatching N i2v ops.
         variantCount: picked.length || 1,
       });
       closeGenerationDialog();
@@ -1083,27 +1074,45 @@ export function GenerationDialog() {
         )}
 
         {/* Source image / video source info (t2v, continuation, or i2v) */}
-        {isVideo && !isOmniVideo && (
+        {isVideo && videoInfo?.mode === "t2v" && (
           <div className="gen-dialog__field">
-            {videoInfo?.mode === "t2v" && (
-              <div className="source-info-box source-info-box--t2v">
-                <span className="source-info-box__icon">✨</span>
-                <div className="source-info-box__content">
-                  <span className="source-info-box__title">Chế độ: Text/Image to Video (t2v)/(i2v)</span>
-                  <div style={{ marginTop: 10 }}>
-                    <MediaPicker
-                      kind="both"
-                      value={t2vLibraryMediaId}
+            <div className="source-info-box source-info-box--t2v">
+              <span className="source-info-box__icon">✨</span>
+              <div className="source-info-box__content" style={{ width: '100%' }}>
+                <div className="gen-dialog__label-row">
+                  <span className="source-info-box__title">Chế độ: Text/Image to Video</span>
+                  {independentVideoMediaIds.length > 0 && (
+                    <select
+                      className="source-select-mini"
+                      value={independentVideoMode}
+                      onChange={(e) => setIndependentVideoMode(e.target.value as "i2v" | "r2v")}
                       disabled={isWorking}
-                      onChange={(id, items) => {
-                        setT2vLibraryMediaId(id);
-                        setT2vLibraryMediaItem(items?.[0] || null);
-                      }}
-                    />
-                  </div>
+                      style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fff', border: 'none' }}
+                    >
+                      <option value="i2v">Nối tiếp (i2v)</option>
+                      <option value="r2v">Ingredients (r2v)</option>
+                    </select>
+                  )}
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  <MediaPicker
+                    kind="image"
+                    multi={true}
+                    value={independentVideoMediaIds}
+                    disabled={isWorking}
+                    onChange={(ids) => {
+                      const newIds = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+                      setIndependentVideoMediaIds(newIds);
+                    }}
+                  />
                 </div>
               </div>
-            )}
+            </div>
+          </div>
+        )}
+
+        {isVideo && !isOmniVideo && (
+          <div className="gen-dialog__field">
 
             {videoInfo?.mode === "video_continuation" && (
               <div className="source-info-box source-info-box--continuation">
@@ -1142,32 +1151,50 @@ export function GenerationDialog() {
             {videoInfo?.mode === "i2v" && (
               <>
                 <div className="gen-dialog__label-row">
-                  <span className="gen-dialog__label">
-                    Source image{sourceMediaIds.length > 1 ? `s (${sourceMediaIds.length})` : ""}
+                  <span className="gen-dialog__label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    Chế độ:
+                    <select
+                      className="source-select-mini"
+                      value={connectedVideoMode}
+                      onChange={(e) => setConnectedVideoMode(e.target.value as "i2v" | "r2v")}
+                      disabled={isWorking}
+                      style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fff', border: 'none' }}
+                    >
+                      <option value="i2v">Nối tiếp (i2v)</option>
+                      <option value="r2v">Ingredients (r2v)</option>
+                    </select>
                   </span>
-                  {sourceMediaIds.length > 1 && (
-                    <div className="source-select-actions">
-                      <button
-                        type="button"
-                        className="source-select-mini"
-                        onClick={() =>
-                          setSelectedSourceIdx(
-                            new Set(sourceMediaIds.map((_, i) => i)),
-                          )
-                        }
-                      >
-                        All
-                      </button>
-                      <button
-                        type="button"
-                        className="source-select-mini"
-                        onClick={() => setSelectedSourceIdx(new Set())}
-                      >
-                        None
-                      </button>
-                    </div>
-                  )}
                 </div>
+                
+                {connectedVideoMode === "i2v" && (
+                  <>
+                    <div className="gen-dialog__label-row" style={{ marginTop: '10px' }}>
+                      <span className="gen-dialog__label">
+                        Source image{sourceMediaIds.length > 1 ? `s (${sourceMediaIds.length})` : ""}
+                      </span>
+                      {sourceMediaIds.length > 1 && (
+                        <div className="source-select-actions">
+                          <button
+                            type="button"
+                            className="source-select-mini"
+                            onClick={() =>
+                              setSelectedSourceIdx(
+                                new Set(sourceMediaIds.map((_, i) => i)),
+                              )
+                            }
+                          >
+                            All
+                          </button>
+                          <button
+                            type="button"
+                            className="source-select-mini"
+                            onClick={() => setSelectedSourceIdx(new Set())}
+                          >
+                            None
+                          </button>
+                        </div>
+                      )}
+                    </div>
                 {sourceMediaIds.length > 0 && sourceNode ? (
                   <>
                     <div className="source-image-row">
@@ -1226,6 +1253,8 @@ export function GenerationDialog() {
                     Node #{sourceNode?.data.shortId || "nguồn"} chưa có ảnh kết quả. Hãy tạo ảnh trước.
                   </div>
                 )}
+                  </>
+                )}
               </>
             )}
           </div>
@@ -1235,7 +1264,7 @@ export function GenerationDialog() {
             Storyboard) AND prompt-text refs. Prompt nodes don't have
             media but their text feeds the auto-prompt synth, so we
             surface them as text chips next to the thumbnails. */}
-        {(!isVideo || isOmniVideo)
+        {(!isVideo || isOmniVideo || videoInfo?.mode === "r2v" || (videoInfo?.mode === "i2v" && connectedVideoMode === "r2v"))
           && (refSourceNodes.length > 0 || promptSourceNodes.length > 0)
           && (
           <div className="gen-dialog__field">
