@@ -95,7 +95,7 @@ export async function extractAndUploadLastFrame(videoMediaId: string): Promise<s
   return uploaded.media_id;
 }
 
-export type VideoModeType = 't2v' | 'i2v' | 'video_continuation';
+export type VideoModeType = 't2v' | 'i2v' | 'video_continuation' | 'r2v';
 
 export interface VideoUpstreamInfo {
   mode: VideoModeType;
@@ -105,6 +105,7 @@ export interface VideoUpstreamInfo {
   sourceMediaIds?: string[];
   isVideoUpstream: boolean;
   isImageUpstream: boolean;
+  upstreamNodes: FlowNode[];
 }
 
 export function getVideoUpstreamInfo(
@@ -115,73 +116,54 @@ export function getVideoUpstreamInfo(
   const incomingEdges = edges.filter((e) => e.target === rfId);
   const upstreamNodes = incomingEdges
     .map((e) => nodes.find((n) => n.id === e.source))
-    .filter((n): n is FlowNode => Boolean(n));
+    .filter((n): n is FlowNode => Boolean(n) && ['image', 'character', 'visual_asset', 'Storyboard', 'video'].includes(n!.data.type));
 
-  // 1. Check if there is an upstream video
-  const videoUpstream = upstreamNodes.find((n) => n.data.type === 'video');
-  if (videoUpstream) {
-    const vEdge = incomingEdges.find((e) => e.source === videoUpstream.id);
-    const pin = (vEdge?.data?.sourceVariantIdx ?? null) as number | null;
-    const vVariants = (Array.isArray(videoUpstream.data.mediaIds) ? videoUpstream.data.mediaIds : []).filter(
-      (m): m is string => typeof m === 'string' && m.length > 0
-    );
-    let sourceMediaId: string | undefined;
-    if (pin !== null && pin >= 0 && pin < vVariants.length) {
-      sourceMediaId = vVariants[pin];
-    } else if (typeof videoUpstream.data.mediaId === 'string' && videoUpstream.data.mediaId) {
-      sourceMediaId = videoUpstream.data.mediaId;
-    } else if (vVariants.length > 0) {
-      sourceMediaId = vVariants[0];
-    }
-
+  if (upstreamNodes.length >= 2) {
     return {
-      mode: 'video_continuation',
-      label: 'Nối tiếp video (frame cuối)',
-      sourceNode: videoUpstream,
-      sourceMediaId,
-      sourceMediaIds: vVariants,
-      isVideoUpstream: true,
-      isImageUpstream: false,
+      mode: 'r2v',
+      label: 'Ingredients (r2v)',
+      upstreamNodes,
+      isVideoUpstream: upstreamNodes.some((n) => n.data.type === 'video'),
+      isImageUpstream: upstreamNodes.some((n) => n.data.type !== 'video'),
     };
   }
 
-  // 2. Check if there is an upstream image (image, character, visual_asset, Storyboard)
-  const imageUpstream = upstreamNodes.find((n) =>
-    ['image', 'character', 'visual_asset', 'Storyboard'].includes(n.data.type)
-  );
-  if (imageUpstream) {
-    const iEdge = incomingEdges.find((e) => e.source === imageUpstream.id);
-    const pin = (iEdge?.data?.sourceVariantIdx ?? null) as number | null;
-    const iVariants = (Array.isArray(imageUpstream.data.mediaIds) ? imageUpstream.data.mediaIds : []).filter(
+  if (upstreamNodes.length === 1) {
+    const sourceNode = upstreamNodes[0];
+    const isVideo = sourceNode.data.type === 'video';
+    const edge = incomingEdges.find((e) => e.source === sourceNode.id);
+    const pin = (edge?.data?.sourceVariantIdx ?? null) as number | null;
+    const variants = (Array.isArray(sourceNode.data.mediaIds) ? sourceNode.data.mediaIds : []).filter(
       (m): m is string => typeof m === 'string' && m.length > 0
     );
     let sourceMediaId: string | undefined;
-    if (pin !== null && pin >= 0 && pin < iVariants.length) {
-      sourceMediaId = iVariants[pin];
-    } else if (typeof imageUpstream.data.mediaId === 'string' && imageUpstream.data.mediaId) {
-      sourceMediaId = imageUpstream.data.mediaId;
-    } else if (iVariants.length > 0) {
-      sourceMediaId = iVariants[0];
+    if (pin !== null && pin >= 0 && pin < variants.length) {
+      sourceMediaId = variants[pin];
+    } else if (typeof sourceNode.data.mediaId === 'string' && sourceNode.data.mediaId) {
+      sourceMediaId = sourceNode.data.mediaId;
+    } else if (variants.length > 0) {
+      sourceMediaId = variants[0];
     }
-    const denseMids = iVariants.length > 0 ? iVariants : (sourceMediaId ? [sourceMediaId] : []);
+    const denseMids = variants.length > 0 ? variants : (sourceMediaId ? [sourceMediaId] : []);
 
     return {
       mode: 'i2v',
-      label: 'Ảnh → Video (i2v)',
-      sourceNode: imageUpstream,
+      label: isVideo ? 'Nối tiếp video (i2v)' : 'Ảnh → Video (i2v)',
+      sourceNode,
       sourceMediaId,
       sourceMediaIds: denseMids,
-      isVideoUpstream: false,
-      isImageUpstream: true,
+      isVideoUpstream: isVideo,
+      isImageUpstream: !isVideo,
+      upstreamNodes,
     };
   }
 
-  // 3. No preceding video or image/character -> Text to Video
   return {
     mode: 't2v',
     label: 'Text → Video (t2v)',
     isVideoUpstream: false,
     isImageUpstream: false,
+    upstreamNodes: [],
   };
 }
 

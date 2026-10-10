@@ -256,6 +256,7 @@ export function GenerationDialog() {
   const [independentVideoMediaIds, setIndependentVideoMediaIds] = useState<string[]>([]);
   const [independentVideoMode, setIndependentVideoMode] = useState<"i2v" | "r2v">("i2v");
   const [connectedVideoMode, setConnectedVideoMode] = useState<"i2v" | "r2v">("i2v");
+  const [r2vAdditionalMediaIds, setR2vAdditionalMediaIds] = useState<string[]>([]);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLTextAreaElement>(null);
@@ -303,6 +304,8 @@ export function GenerationDialog() {
   // frame. So the dialog should show the same "Source references" chip
   // list that image targets use, and hide Veo's source-image selector.
   const isOmniVideo = isVideo && videoModelFamily === "omni_flash";
+  const actualConnectedMode = videoInfo?.mode === "i2v" ? connectedVideoMode : videoInfo?.mode;
+  const isEffectiveR2v = isVideo && (videoInfo?.mode === "i2v" || videoInfo?.mode === "r2v") && (isOmniVideo || actualConnectedMode === "r2v");
   // Prompt nodes are text-only — clicking Generate runs auto_prompt
   // synthesis from upstream context and writes the result back to
   // node.data.prompt. No image dispatch, no aspect/variants.
@@ -355,7 +358,7 @@ export function GenerationDialog() {
   // Both image targets AND Omni-video targets use the ingredient chip
   // list (multi-ref upstream → one chip per edge). Veo i2v video has
   // its own single-source-with-variant-batch picker below.
-  const promptSourceNodes = (!isVideo || isOmniVideo || videoInfo?.mode === "r2v" || (videoInfo?.mode === "i2v" && connectedVideoMode === "r2v")) && rfId
+  const promptSourceNodes = (!isVideo || isEffectiveR2v) && rfId
     ? edges
         .filter((e) => e.target === rfId)
         .map((e) => {
@@ -367,7 +370,7 @@ export function GenerationDialog() {
         .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     : [];
 
-  const refSourceNodes = (!isVideo || isOmniVideo || videoInfo?.mode === "r2v" || (videoInfo?.mode === "i2v" && connectedVideoMode === "r2v")) && rfId
+  const refSourceNodes = (!isVideo || isEffectiveR2v) && rfId
     ? edges
         .filter((e) => e.target === rfId)
         .map((e) => {
@@ -484,6 +487,7 @@ export function GenerationDialog() {
       setIndependentVideoMediaIds((openNodeData?.independentMediaIds as string[]) || []);
       setIndependentVideoMode((openNodeData?.independentVideoMode as "i2v" | "r2v") || "i2v");
       setConnectedVideoMode((openNodeData?.connectedVideoMode as "i2v" | "r2v") || "i2v");
+      setR2vAdditionalMediaIds((openNodeData?.r2vAdditionalMediaIds as string[]) || []);
       
       triggerRef.current = document.activeElement;
       // Focus textarea on open
@@ -804,8 +808,9 @@ export function GenerationDialog() {
       // 3. Ảnh -> Video (i2v hoặc r2v)
       // Filter the upstream variants to the user's selection
       const picked = sourceMediaIds.filter((_, i) => selectedSourceIdx.has(i));
-      const useMulti = picked.length > 1;
-      const actualConnectedMode = videoInfo?.mode === "i2v" ? connectedVideoMode : videoInfo?.mode;
+      
+      const finalPicked = isEffectiveR2v ? [...picked, ...r2vAdditionalMediaIds] : picked;
+      const useMulti = finalPicked.length > 1;
 
       if (videoInfo?.mode === "i2v") {
         const dbId = parseInt(rfId, 10);
@@ -815,14 +820,22 @@ export function GenerationDialog() {
         }
       }
 
+      if (isEffectiveR2v) {
+        const dbId = parseInt(rfId, 10);
+        useBoardStore.getState().updateNodeData(rfId, { r2vAdditionalMediaIds });
+        if (!isNaN(dbId)) {
+          patchNode(dbId, { data: { r2vAdditionalMediaIds } }).catch(() => {});
+        }
+      }
+
       dispatchGeneration(rfId, {
         prompt: videoPrompt,
         aspectRatio,
         kind: "video",
-        videoMode: actualConnectedMode,
-        sourceMediaId: useMulti ? undefined : picked[0],
-        sourceMediaIds: useMulti ? picked : undefined,
-        variantCount: picked.length || 1,
+        videoMode: actualConnectedMode as "i2v" | "r2v",
+        sourceMediaId: useMulti ? undefined : finalPicked[0],
+        sourceMediaIds: useMulti ? finalPicked : undefined,
+        variantCount: finalPicked.length || 1,
       });
       closeGenerationDialog();
       return;
@@ -857,17 +870,15 @@ export function GenerationDialog() {
   const isVideoReady =
     !isVideo ||
     (videoInfo?.mode === "t2v"
-      ? (prompt.trim().length > 0 || Boolean(t2vLibraryMediaId)) && !extractingFrame
+      ? (isOmniVideo ? independentVideoMediaIds.length > 0 : (prompt.trim().length > 0 || independentVideoMediaIds.length > 0)) && !extractingFrame
       : videoInfo?.mode === "video_continuation"
       ? Boolean(videoInfo.sourceMediaId) &&
         videoInfo.sourceNode?.data.status === "done" &&
         !extractingFrame
-      : selectedSourceIdx.size > 0 && !extractingFrame);
+      : (isEffectiveR2v ? (refSourceNodes.length > 0 || r2vAdditionalMediaIds.length > 0) : selectedSourceIdx.size > 0) && !extractingFrame);
 
   const canGenerate = isCharacter
     ? charGender !== null || charCountry !== null || charExtras.trim().length > 0
-    : isOmniVideo
-    ? refSourceNodes.length > 0 && !isWorking
     : isVideo
     ? isVideoReady && !isWorking
     : !isWorking;
@@ -1264,7 +1275,7 @@ export function GenerationDialog() {
             Storyboard) AND prompt-text refs. Prompt nodes don't have
             media but their text feeds the auto-prompt synth, so we
             surface them as text chips next to the thumbnails. */}
-        {(!isVideo || isOmniVideo || videoInfo?.mode === "r2v" || (videoInfo?.mode === "i2v" && connectedVideoMode === "r2v"))
+        {(!isVideo || isEffectiveR2v)
           && (refSourceNodes.length > 0 || promptSourceNodes.length > 0)
           && (
           <div className="gen-dialog__field">
@@ -1370,6 +1381,27 @@ export function GenerationDialog() {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* Additional Images for R2V from Library */}
+        {isEffectiveR2v && (
+          <div className="gen-dialog__field">
+            <span className="gen-dialog__label">
+              Ảnh bổ sung từ thư viện:
+            </span>
+            <div style={{ marginTop: 10 }}>
+              <MediaPicker
+                kind="image"
+                multi={true}
+                value={r2vAdditionalMediaIds}
+                disabled={isWorking}
+                onChange={(ids) => {
+                  const newIds = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+                  setR2vAdditionalMediaIds(newIds);
+                }}
+              />
             </div>
           </div>
         )}

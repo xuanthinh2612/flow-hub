@@ -8,6 +8,7 @@ import {
 } from "./dummyBoardApi";
 import { useBoardStore, type FlowboardNodeData } from "./board";
 import { useSettingsStore, type MediaProviderKey } from "./settings";
+import { extractAndUploadLastFrame } from "../utils/videoFrame";
 
 type PollEntry = { requestId: number; timerId: ReturnType<typeof setTimeout> | null };
 
@@ -60,6 +61,7 @@ interface GenerationState {
       aspectRatio?: string;
       paygateTier?: string;
       kind?: "image" | "video";
+      videoMode?: "t2v" | "i2v" | "r2v";
       sourceMediaId?: string;
       // Multi-source-image i2v: when the upstream image has N variants
       // we generate one video per variant. Backend sends N items in the
@@ -106,7 +108,52 @@ interface GenerationState {
 // One ref per edge means one Flow API call regardless of how many
 // variants the upstream has — the user picks which variant feeds
 // which downstream by clicking the variant tile (Stage 2 UX).
-const REF_SOURCE_TYPES = new Set(["character", "image", "visual_asset", "Storyboard"]);
+const REF_SOURCE_TYPES = new Set(["character", "image", "visual_asset", "Storyboard", "video"]);
+
+async function collectUpstreamRefMediaIdsAsync(targetRfId: string): Promise<string[]> {
+  const { nodes, edges } = useBoardStore.getState();
+  const ids: string[] = [];
+  for (const e of edges) {
+    if (e.target !== targetRfId) continue;
+    const src = nodes.find((n) => n.id === e.source);
+    if (!src || !REF_SOURCE_TYPES.has(src.data.type)) continue;
+
+    const variants = Array.isArray(src.data.mediaIds) ? src.data.mediaIds : [];
+    const pinned = (e.data?.sourceVariantIdx ?? null) as number | null;
+
+    let chosen: string | null = null;
+    if (
+      pinned !== null
+      && pinned >= 0
+      && pinned < variants.length
+      && typeof variants[pinned] === "string"
+      && variants[pinned]
+    ) {
+      chosen = variants[pinned] as string;
+    } else if (typeof src.data.mediaId === "string" && src.data.mediaId) {
+      chosen = src.data.mediaId;
+    } else if (variants.length > 0 && typeof variants[0] === "string" && variants[0]) {
+      chosen = variants[0] as string;
+    }
+
+    if (chosen) {
+      if (src.data.type === "video") {
+        try {
+          useBoardStore.getState().updateNodeData(targetRfId, { error: 'Đang trích xuất frame từ video...' });
+          const extractedId = await extractAndUploadLastFrame(chosen);
+          ids.push(extractedId);
+          useBoardStore.getState().updateNodeData(targetRfId, { error: undefined });
+        } catch (err) {
+          console.error("Failed to extract frame from upstream video", err);
+          throw new Error("Không thể trích xuất frame từ video nguồn: " + (err instanceof Error ? err.message : String(err)));
+        }
+      } else {
+        ids.push(chosen);
+      }
+    }
+  }
+  return ids;
+}
 
 function collectUpstreamRefMediaIds(targetRfId: string): string[] {
   const { nodes, edges } = useBoardStore.getState();
@@ -134,6 +181,8 @@ function collectUpstreamRefMediaIds(targetRfId: string): string[] {
       chosen = variants[0] as string;
     }
 
+    // Note: collectUpstreamRefMediaIds is synchronous and used by the dialog preview.
+    // The dialog preview will just use the video's poster (which might not be the exact extracted frame yet).
     if (chosen) ids.push(chosen);
   }
   return ids;
@@ -636,6 +685,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     aspectRatio?: string;
     paygateTier?: string;
     kind?: "image" | "video";
+    videoMode?: "t2v" | "i2v" | "r2v";
     sourceMediaId?: string;
     sourceMediaIds?: string[];
     variantCount?: number;
@@ -697,62 +747,65 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       if (kind === "video") {
         const settings = useSettingsStore.getState();
         const isOmni = settings.videoModel === "omni_flash";
+        const videoMode = opts.videoMode ?? "t2v";
 
-        // Omni Flash takes a fundamentally different input shape from
-        // Veo i2v. Veo wants ONE source image to use as the literal
-        // start frame (multi-source = batch of N parallel i2v calls,
-        // one per variant). Omni Flash takes "ingredients" — a list of
-        // referenceImages[] where each entry is IMAGE_USAGE_TYPE_ASSET.
-        // The model conditions on the assets but doesn't use any of
-        // them as a literal frame. So we walk EVERY upstream image-
-        // bearing edge (character / image / visual_asset / Storyboard)
-        // and pass them all, not just the one edge the i2v UI picked.
-        if (isOmni) {
-          const ingredients = collectUpstreamRefMediaIds(rfId);
+        // Both Omni Flash and Veo's r2v mode take ingredients (ref_media_ids)
+        if (isOmni || videoMode === "r2v") {
+          let ingredients = opts.sourceMediaIds && opts.sourceMediaIds.length > 0 
+            ? opts.sourceMediaIds 
+            : await collectUpstreamRefMediaIdsAsync(rfId);
+            
           if (ingredients.length === 0) {
             useBoardStore.getState().updateNodeData(rfId, {
               status: "error",
               error: "no ingredients",
             });
             set({
-              error:
-                "Omni Flash needs at least one ingredient (connect an upstream Character / Image / Visual asset).",
+              error: "Vui lòng thêm ít nhất 1 ảnh (ingredient) để tạo video.",
             });
             return;
           }
-          reqDto = await createRequest({
-            type: "gen_video_omni",
-            node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
-            params: {
-              prompt: opts.prompt,
-              media_provider: mediaProvider,
-              project_id: projectId,
-              ref_media_ids: ingredients,
-              duration_s: settings.omniFlashDuration,
-              aspect_ratio:
-                opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_PORTRAIT",
-              paygate_tier:
-                opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
-            },
-          });
+          
+          if (isOmni) {
+            reqDto = await createRequest({
+              type: "gen_video_omni",
+              node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
+              params: {
+                prompt: opts.prompt,
+                media_provider: mediaProvider,
+                project_id: projectId,
+                ref_media_ids: ingredients,
+                duration_s: settings.omniFlashDuration,
+                aspect_ratio: opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_PORTRAIT",
+                paygate_tier: opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
+              },
+            });
+          } else {
+            // Veo r2v
+            reqDto = await createRequest({
+              type: "gen_video",
+              node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
+              params: {
+                prompt: opts.prompt,
+                media_provider: mediaProvider,
+                project_id: projectId,
+                ref_media_ids: ingredients,
+                aspect_ratio: opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_LANDSCAPE",
+                paygate_tier: opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
+                video_quality: settings.videoQuality,
+              },
+            });
+          }
         } else {
-          // Veo i2v path — still validates "must have a single source
-          // image / variant batch" because that's the model's input
-          // contract. Omni's ingredient validation above runs first
-          // when isOmni; this check only fires for the Veo branch.
-          const hasMulti =
-            Array.isArray(opts.sourceMediaIds) && opts.sourceMediaIds.length > 0;
-          const isT2V = !hasMulti && !opts.sourceMediaId;
+          // Veo i2v or t2v path
+          const hasMulti = Array.isArray(opts.sourceMediaIds) && opts.sourceMediaIds.length > 0;
+          const isT2V = videoMode === "t2v" && !hasMulti && !opts.sourceMediaId;
           const videoParams: Record<string, unknown> = {
             prompt: opts.prompt,
             media_provider: mediaProvider,
             project_id: projectId,
             aspect_ratio: opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_LANDSCAPE",
-            // Tier precedence: explicit caller arg > auto-detected from
-            // Flow > TIER_ONE fallback. The dialog no longer asks the user.
-            paygate_tier:
-              opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
-            // Backend resolves [tier][quality][aspect] → Flow model key.
+            paygate_tier: opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
             video_quality: settings.videoQuality,
           };
           if (hasMulti) {
@@ -767,7 +820,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           });
         }
       } else {
-        const refMediaIds = collectUpstreamRefMediaIds(rfId);
+        const refMediaIds = await collectUpstreamRefMediaIdsAsync(rfId);
         const params: Record<string, unknown> = {
           prompt: opts.prompt,
           media_provider: mediaProvider,
