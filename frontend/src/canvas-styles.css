@@ -6153,3 +6153,7 @@ button:disabled {
 
 .react-flow .react-flow__controls-button svg { fill: var(--text) !important; }
 .react-flow .react-flow__panel { color: var(--muted) !important; }
+
+.react-flow .react-flow__minimap-node {
+  fill: #7f7f7f !important;
+}
