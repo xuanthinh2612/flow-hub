@@ -9,6 +9,7 @@ import {
   normaliseStoryboardGrid,
   resolveStoryboardLayout,
 } from "../lib/storyboardPrompt";
+import { getVideoUpstreamInfo } from "../utils/videoFrame";
 
 const ICON: Record<string, string> = {
   character: "◎",
@@ -166,9 +167,9 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
       >
         <div
           className={`character-avatar${dragOver ? " character-avatar--over" : ""}${uploading ? " character-avatar--uploading" : ""}`}
-          onClick={onPick}
+          onClick={() => useGenerationStore.getState().openResultViewer(rfId, 0)}
           role="button"
-          aria-label="Replace character image"
+          aria-label="View character image"
           tabIndex={0}
         >
           <img
@@ -285,16 +286,7 @@ function saveTileToLibrary(opts: {
     typeof data.aiBrief === "string" && data.aiBrief.trim().length > 0
       ? data.aiBrief.slice(0, 80)
       : `#${data.shortId}`;
-  // void useReferencesStore.getState().save({
-    media_id: mediaId,
-    kind: referenceKindFor(nodeType),
-    ai_brief: typeof data.aiBrief === "string" ? data.aiBrief : null,
-    aspect_ratio: typeof data.aspectRatio === "string" ? data.aspectRatio : null,
-    label,
-    source_board_id: useBoardStore.getState().boardId ?? null,
-    source_node_short_id:
-      typeof data.shortId === "string" ? data.shortId : null,
-  });
+
 }
 
 const MAX_IMG_RETRIES = 5;
@@ -801,24 +793,17 @@ function VideoTile({
   mediaId,
   posterMediaId,
   isProcessing,
+  isExtracting,
   isError,
   slotError,
   alt,
   onClick,
 }: {
   mediaId: string | undefined;
-  // Upstream image's mediaId — used as the static poster so the tile
-  // shows the source-image framing (subject centered, just like the
-  // image-tile preview) instead of the video's frame-0 which often
-  // catches a setup beat (ceiling, empty room) before the subject is
-  // composed in.
   posterMediaId?: string | undefined;
   isProcessing: boolean;
+  isExtracting?: boolean;
   isError: boolean;
-  // Per-slot error code (e.g. "PUBLIC_ERROR_UNSAFE_GENERATION") when
-  // this specific variant got blocked by Veo's safety classifier. Only
-  // surfaced for the partial-batch case so the tile can render a
-  // distinctive ⚠ + tooltip instead of the generic empty placeholder.
   slotError?: string | null;
   alt: string;
   onClick?: () => void;
@@ -844,7 +829,7 @@ function VideoTile({
 
   const placeholder = (
     <div
-      className={`video-placeholder${isProcessing ? " video-placeholder--processing" : ""}${isError ? " video-placeholder--error" : ""}${slotError ? " video-placeholder--blocked" : ""}`}
+      className={`video-placeholder${isProcessing || isExtracting ? " video-placeholder--processing" : ""}${isError ? " video-placeholder--error" : ""}${slotError ? " video-placeholder--blocked" : ""}`}
       aria-hidden="true"
       title={blockedTitle}
     >
@@ -853,6 +838,10 @@ function VideoTile({
           <span className="video-blocked-icon">⚠</span>
           <span className="video-blocked-label">Blocked</span>
         </>
+      ) : isExtracting ? (
+        <span className="video-play" style={{ fontSize: '12px' }}>&gt;&gt;&gt; đang lấy frame cuối</span>
+      ) : isProcessing ? (
+        <span className="video-play" style={{ fontSize: '12px' }}>&gt;&gt;&gt; đang render</span>
       ) : (
         <>
           <span className="video-play">▶</span>
@@ -891,6 +880,7 @@ function VideoTile({
 
   const givenUp = attempt >= MAX_VIDEO_RETRIES;
   const src = attempt > 0 ? `${mediaUrl(mediaId)}?retry=${attempt}` : mediaUrl(mediaId);
+  const videoSrc = `${src}#t=0.1`;
   const cls =
     `video-tile video-tile--filled` +
     (onClick ? " video-tile--clickable" : "");
@@ -939,11 +929,11 @@ function VideoTile({
           key={attempt}
           className="node-card__thumbnail"
           data-kind="video"
-          src={src}
-          preload="none"
+          src={videoSrc}
+          preload="metadata"
           muted
           aria-label={alt}
-          style={loaded ? undefined : { display: "none" }}
+          style={{ opacity: loaded ? 1 : 0 }}
           onLoadedData={() => setLoaded(true)}
           onError={() => {
             retryTimerRef.current = setTimeout(() => {
@@ -973,17 +963,20 @@ function VideoBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
 
   // Resolve the upstream image used as the i2v source — its variants
   // become the per-tile poster so the static preview shows the same
-  // subject-centered framing as the upstream image card. Multi-source
-  // i2v: variant i of the video came from variant i of the upstream
-  // image; single-source: every tile shares the same poster.
+  // subject-centered framing as the upstream image card.
+  // For upstream video (video_continuation) or t2v, do NOT treat upstream as an image poster!
   const { nodes, edges } = useBoardStore.getState();
-  const upstreamEdge = edges.find((e) => e.target === rfId);
-  const upstreamNode = upstreamEdge
-    ? nodes.find((n) => n.id === upstreamEdge.source)
-    : undefined;
-  const posterIds: (string | null)[] =
-    upstreamNode?.data.mediaIds ??
-    (upstreamNode?.data.mediaId ? [upstreamNode.data.mediaId] : []);
+  const videoInfo = getVideoUpstreamInfo(rfId, nodes, edges);
+  let posterIds: (string | null)[] = [];
+  if (videoInfo.isImageUpstream && videoInfo.sourceNode) {
+    posterIds =
+      videoInfo.sourceNode.data.mediaIds ??
+      (videoInfo.sourceNode.data.mediaId ? [videoInfo.sourceNode.data.mediaId] : []);
+  } else if (videoInfo.mode === "t2v" && typeof data.t2vSourceId === "string") {
+    posterIds = [data.t2vSourceId];
+  }
+
+  const isExtracting = data.extractingFrame === true;
 
   const tiles: React.JSX.Element[] = [];
   for (let i = 0; i < tileCount; i++) {
@@ -991,14 +984,11 @@ function VideoBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
     const mid = typeof rawMid === "string" && rawMid ? rawMid : undefined;
     const slotError = data.slotErrors?.[i] ?? null;
     const slotBlocked = isPartial && rawMid === null;
-    // Even blocked tiles get a click handler so the user can open the
-    // detail viewer and read the full filter reason — without it the
-    // tile is dead and the user has no way to understand why it's
-    // empty.
+    // Click opens viewer if generated media or error exists, otherwise opens generation dialog
     const onClick =
       mid || slotBlocked
         ? () => useGenerationStore.getState().openResultViewer(rfId, i)
-        : undefined;
+        : () => useGenerationStore.getState().openGenerationDialog(rfId, data.prompt ?? "");
     // Pick the i-th source variant if available; fall back to the
     // first non-null source for single-source i2v where every video
     // shares it.
@@ -1010,6 +1000,7 @@ function VideoBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
         mediaId={mid}
         posterMediaId={poster}
         isProcessing={isProcessing && !mid}
+        isExtracting={isExtracting && !mid}
         isError={(isError && !mid) || slotBlocked}
         slotError={slotError}
         alt={data.title}
@@ -1486,6 +1477,9 @@ export function NodeCard(props: NodeProps<FlowNode>) {
   const llmBusy = isLLMBusy(data);
   const downloadable = !!data.mediaId && data.type !== "prompt" && data.type !== "note";
 
+  const { nodes, edges } = useBoardStore();
+  const videoInfo = data.type === "video" ? getVideoUpstreamInfo(props.id, nodes, edges) : null;
+
   function handleGenerate(e: React.MouseEvent) {
     e.stopPropagation();
     if (llmBusy) return; // guard: backend still composing for this node
@@ -1534,6 +1528,16 @@ export function NodeCard(props: NodeProps<FlowNode>) {
       <div className="node-header">
         <span className="node-icon" aria-hidden="true">{ICON[data.type] ?? "□"}</span>
         <span className="node-title">{data.title}</span>
+        {videoInfo && (
+          <span
+            className={`video-mode-pill video-mode-pill--${videoInfo.mode}`}
+            title={videoInfo.label}
+          >
+            {videoInfo.mode === "t2v" && (data.t2vSourceId ? "i2v" : "t2v")}
+            {videoInfo.mode === "i2v" && "i2v"}
+            {videoInfo.mode === "video_continuation" && "i2v"}
+          </span>
+        )}
         {llmBusy && (
           // Compact pill so the busy state reads at a glance even if the
           // body is collapsed. Title is contextual: composing vs. analysing.

@@ -289,7 +289,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         data: {
           type: n.type,
           shortId: n.short_id,
-          title: (n.data["title"] as string | undefined) ?? TYPE_TITLE[n.type],
+          title: (n.data["title"] as string | undefined) ?? TYPE_TITLE[n.type as NodeType],
           status: n.status,
           prompt: n.data["prompt"] as string | undefined,
           thumbnailUrl: n.data["thumbnailUrl"] as string | undefined,
@@ -359,7 +359,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         data: {
           type: n.type,
           shortId: n.short_id,
-          title: (n.data["title"] as string | undefined) ?? TYPE_TITLE[n.type],
+          title: (n.data["title"] as string | undefined) ?? TYPE_TITLE[n.type as NodeType],
           status: n.status,
           prompt: n.data["prompt"] as string | undefined,
           thumbnailUrl: n.data["thumbnailUrl"] as string | undefined,
@@ -457,7 +457,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         data: {
           type: n.type,
           shortId: n.short_id,
-          title: (n.data["title"] as string | undefined) ?? TYPE_TITLE[n.type],
+          title: (n.data["title"] as string | undefined) ?? TYPE_TITLE[n.type as NodeType],
           status: n.status,
           prompt: n.data["prompt"] as string | undefined,
           thumbnailUrl: n.data["thumbnailUrl"] as string | undefined,
@@ -507,7 +507,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   async addNodeOfType(type, position) {
     const { boardId } = get();
     if (boardId === null) return null;
-    const title = TYPE_TITLE[type];
+    const title = TYPE_TITLE[type as NodeType];
     try {
       const dto = await createNode({
         board_id: boardId,
@@ -518,13 +518,13 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       });
       const node: FlowNode = {
         id: String(dto.id),
-        type: dto.type,
+        type: dto.type as NodeType,
         position: { x: dto.x, y: dto.y },
         data: {
-          type: dto.type,
+          type: dto.type as NodeType,
           shortId: dto.short_id,
           title: (dto.data["title"] as string | undefined) ?? title,
-          status: dto.status,
+          status: dto.status as NodeStatus | undefined,
         },
       };
       set((s) => ({ nodes: [...s.nodes, node] }));
@@ -657,7 +657,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       x: Math.round(src.position.x + offset.x),
       y: Math.round(src.position.y + offset.y),
     };
-    const baseTitle = src.data.title ?? TYPE_TITLE[src.data.type];
+    const baseTitle = src.data.title ?? TYPE_TITLE[src.data.type as NodeType];
     const newTitle = baseTitle.endsWith("(variant)")
       ? baseTitle
       : `${baseTitle} (variant)`;

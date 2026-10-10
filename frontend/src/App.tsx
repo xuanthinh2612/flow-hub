@@ -8,6 +8,7 @@ import { OverviewPage } from './pages/Overview';
 import { ImageCreatePage } from './pages/ImageCreate';
 import { CharacterCreatePage } from './pages/CharacterCreate';
 import { VideoCreatePage } from './pages/VideoCreate';
+import { CanvasVideoCreatePage } from './pages/CanvasVideoCreate';
 import { LibraryPage } from './pages/Library';
 import { JobsPage } from './pages/Jobs';
 import { ObservationPage } from './pages/Observation';
@@ -28,6 +29,7 @@ export const App: React.FC = () => {
                 <Route path="image" element={<ImageCreatePage />} />
                 <Route path="character" element={<CharacterCreatePage />} />
                 <Route path="video" element={<VideoCreatePage />} />
+                <Route path="canvas" element={<CanvasVideoCreatePage />} />
                 <Route path="library" element={<LibraryPage />} />
                 <Route path="jobs" element={<JobsPage />} />
                 <Route path="observe" element={<ObservationPage />} />

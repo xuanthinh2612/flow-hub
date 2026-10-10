@@ -47,6 +47,7 @@ export const Layout: React.FC = () => {
       image: 'Tạo ảnh',
       character: 'Nhân vật',
       video: 'Tạo video',
+      canvas: 'Tạo video canvas',
       library: 'Thư viện',
       jobs: 'Jobs',
       observe: 'Observation',
@@ -89,6 +90,9 @@ export const Layout: React.FC = () => {
           </NavLink>
           <NavLink to="/video" className={({ isActive }) => (isActive ? 'active' : '')}>
             Video
+          </NavLink>
+          <NavLink to="/canvas" className={({ isActive }) => (isActive ? 'active' : '')}>
+            Video canvas
           </NavLink>
           <NavLink to="/library" className={({ isActive }) => (isActive ? 'active' : '')}>
             Thư viện

@@ -8,11 +8,12 @@ import { ago } from '../utils/format';
 interface MediaPickerProps {
   value: string | string[] | null;
   multi?: boolean;
-  onChange: (value: any) => void;
-  kind?: 'image' | 'video';
+  onChange: (value: any, items?: MediaItem[]) => void;
+  kind?: 'image' | 'video' | 'both';
+  disabled?: boolean;
 }
 
-export const MediaPicker: React.FC<MediaPickerProps> = ({ value, multi = false, onChange, kind = 'image' }) => {
+export const MediaPicker: React.FC<MediaPickerProps> = ({ value, multi = false, onChange, kind = 'image', disabled = false }) => {
   const { openModal, closeModal } = useModal();
   const [mediaMap, setMediaMap] = useState<Record<string, MediaItem>>({});
 
@@ -32,7 +33,8 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({ value, multi = false, 
   }, [value]);
 
   const emit = (newIds: string[]) => {
-    onChange(multi ? newIds : newIds[0] || null);
+    const items = newIds.map(id => mediaMap[id]).filter(Boolean);
+    onChange(multi ? newIds : newIds[0] || null, items);
   };
 
   const handleRemove = (idToRemove: string) => {
@@ -41,15 +43,26 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({ value, multi = false, 
   };
 
   const openPickerModal = async () => {
-    const list = (await allMedia()).filter((m) => m.kind === kind);
+    const list = (await allMedia()).filter((m) => kind === 'both' || m.kind === kind);
+    let title = 'Chọn ảnh';
+    if (kind === 'video') title = 'Chọn video';
+    if (kind === 'both') title = 'Chọn ảnh / video';
+    if (multi) title += ' (nhiều)';
+    
     openModal(
-      multi ? 'Chọn ảnh (nhiều)' : 'Chọn 1 ảnh',
+      title,
       <PickerModalContent
         initialSelected={ids}
         mediaList={list}
         multi={multi}
         onConfirm={(chosen) => {
-          emit(chosen);
+          // fetch from updated list if missing in map
+          const newMap = { ...mediaMap };
+          list.forEach(m => newMap[m.id] = m);
+          setMediaMap(newMap);
+          
+          const items = chosen.map(id => newMap[id]).filter(Boolean);
+          onChange(multi ? chosen : chosen[0] || null, items);
           closeModal();
         }}
       />
@@ -65,12 +78,12 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({ value, multi = false, 
           ) : (
             <div className="noimg">{id.slice(0, 22)}</div>
           )}
-          <button type="button" className="x" onClick={() => handleRemove(id)}>
+          <button type="button" className="x" onClick={() => handleRemove(id)} disabled={disabled}>
             ✕
           </button>
         </div>
       ))}
-      <button type="button" className="pick-add" onClick={openPickerModal}>
+      <button type="button" className="pick-add" onClick={openPickerModal} disabled={disabled}>
         {ids.length && !multi ? 'Đổi' : '+ Chọn'}
       </button>
     </div>

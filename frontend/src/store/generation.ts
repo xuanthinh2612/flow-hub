@@ -147,6 +147,10 @@ const MEDIA_PRODUCING_TYPES = new Set([
   "gen_image",
   "gen_video",
   "gen_video_omni",
+  "gen_video_text",
+  "t2v",
+  "i2v",
+  "image",
   "edit_image",
 ]);
 
@@ -263,7 +267,7 @@ function attachPoll(rfId: string, requestId: number, opts: PollOpts) {
           // duration so the detail panel can surface the exact variant
           // that ran (mirrors backend's resolve_omni_flash_model).
           let stampedVideoQuality: string | undefined;
-          if (req.type === "gen_video") {
+          if (req.type === "gen_video" || req.type === "gen_video_text") {
             stampedVideoQuality = req.params["video_quality"] as
               | string
               | undefined;
@@ -590,7 +594,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
   openDialog: { rfId: null, prompt: "" },
   openViewer: { rfId: null, idx: 0 },
   projectId: null,
-  paygateTier: null,
+  paygateTier: "PAYGATE_TIER_ONE",
   error: null,
 
   openGenerationDialog(rfId, prompt) {
@@ -738,11 +742,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           // when isOmni; this check only fires for the Veo branch.
           const hasMulti =
             Array.isArray(opts.sourceMediaIds) && opts.sourceMediaIds.length > 0;
-          if (!hasMulti && !opts.sourceMediaId) {
-            useBoardStore.getState().updateNodeData(rfId, { status: "error", error: "no source media" });
-            set({ error: "Veo i2v requires a source image (connect an upstream image node)" });
-            return;
-          }
+          const isT2V = !hasMulti && !opts.sourceMediaId;
           const videoParams: Record<string, unknown> = {
             prompt: opts.prompt,
             media_provider: mediaProvider,
@@ -757,11 +757,11 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           };
           if (hasMulti) {
             videoParams.start_media_ids = opts.sourceMediaIds;
-          } else {
+          } else if (opts.sourceMediaId) {
             videoParams.start_media_id = opts.sourceMediaId;
           }
           reqDto = await createRequest({
-            type: "gen_video",
+            type: isT2V ? "gen_video_text" : "gen_video",
             node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
             params: videoParams,
           });

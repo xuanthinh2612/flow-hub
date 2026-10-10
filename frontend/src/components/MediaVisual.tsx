@@ -30,7 +30,11 @@ export const MediaVisual: React.FC<MediaVisualProps> = ({ media, className = '',
   if (isVideo) {
     // If poster_url is provided and has not failed, try loading it
     if (media.poster_url && !posterError) {
-      const src = withKey(`/api/media/${encodeURIComponent(media.id)}/poster`);
+      let src = typeof media.poster_url === 'string' && (media.poster_url.startsWith('http') || media.poster_url.startsWith('/'))
+        ? media.poster_url
+        : `/api/media/${encodeURIComponent(media.id)}/poster`;
+      src = withKey(src);
+      
       return (
         <img
           src={src}
