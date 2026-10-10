@@ -6112,41 +6112,46 @@ button:disabled {
 
 /* ── React Flow UI Overrides ────────────────────────────────────────────── */
 
-.react-flow__minimap {
-  background-color: var(--surface);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+.react-flow .react-flow__minimap {
+  background-color: var(--surface) !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
 }
 
-.react-flow__minimap-mask {
-  fill: var(--bg);
-  opacity: 0.7;
+.react-flow .react-flow__minimap-mask {
+  fill: var(--bg) !important;
+  opacity: 0.7 !important;
 }
 
-.react-flow__controls {
-  background-color: var(--surface);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  overflow: hidden;
+.react-flow .react-flow__panel.react-flow__controls {
+  background-color: var(--surface) !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
+  overflow: hidden !important;
 }
 
-.react-flow__controls-button {
-  background-color: var(--surface);
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  color: var(--text);
-  fill: var(--text);
-  transition: background 120ms ease;
+.react-flow .react-flow__controls-button {
+  background-color: var(--surface) !important;
+  background: var(--surface) !important;
+  border-bottom: 1px solid var(--border) !important;
+  color: var(--text) !important;
+  fill: var(--text) !important;
+  transition: background 120ms ease !important;
 }
 
-.react-flow__controls-button:hover {
-  background-color: var(--panel-high);
-  background: var(--panel-high);
+.react-flow .react-flow__controls-button:hover {
+  background-color: var(--panel-high) !important;
+  background: var(--panel-high) !important;
 }
 
-.react-flow__controls-button:last-child {
-  border-bottom: none;
+.react-flow .react-flow__controls-button:last-child {
+  border-bottom: none !important;
 }
+ 
+ . r e a c t - f l o w   . r e a c t - f l o w _ _ c o n t r o l s - b u t t o n   s v g   {   f i l l :   v a r ( - - t e x t )   ! i m p o r t a n t ;   }  
+  
+ . r e a c t - f l o w   . r e a c t - f l o w _ _ p a n e l   {   c o l o r :   v a r ( - - m u t e d )   ! i m p o r t a n t ;   }  
+ 
