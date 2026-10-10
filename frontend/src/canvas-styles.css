@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   color-scheme: dark;
   --bg: #111318;
   --surface: #191c24;
@@ -6150,8 +6150,6 @@ button:disabled {
 .react-flow .react-flow__controls-button:last-child {
   border-bottom: none !important;
 }
- 
- . r e a c t - f l o w   . r e a c t - f l o w _ _ c o n t r o l s - b u t t o n   s v g   {   f i l l :   v a r ( - - t e x t )   ! i m p o r t a n t ;   }  
-  
- . r e a c t - f l o w   . r e a c t - f l o w _ _ p a n e l   {   c o l o r :   v a r ( - - m u t e d )   ! i m p o r t a n t ;   }  
- 
+
+.react-flow .react-flow__controls-button svg { fill: var(--text) !important; }
+.react-flow .react-flow__panel { color: var(--muted) !important; }
