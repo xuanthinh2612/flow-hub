@@ -34,7 +34,7 @@ export const ModalProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   return (
     <ModalContext.Provider value={{ openModal, closeModal, isOpen: modalState.isOpen }}>
       {children}
-      <dialog ref={dialogRef} className="modal" id="modal" onClose={() => setModalState((prev) => ({ ...prev, isOpen: false }))}>
+      <dialog ref={dialogRef} className="modal" id="modal" onClose={() => setModalState((prev) => ({ ...prev, isOpen: false }))} onClick={(e) => { if (e.target === dialogRef.current) closeModal(); }}>
         <div className="modal-inner">
           <header className="modal-head">
             <span id="modal-title">{modalState.title}</span>

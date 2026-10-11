@@ -475,10 +475,20 @@ export function GenerationDialog() {
         .getState()
         .nodes.find((n) => n.id === rfId)?.data;
       setStoryboardGrid(normaliseStoryboardGrid(openNodeData?.storyboardGrid));
-      setCharGender(null);
-      setCharCountry(null);
-      setCharVibe("clean");
-      setCharExtras("");
+      
+      const initCharGender = (openNodeData?.charGender as GenderKey) || null;
+      const initCharCountry = (openNodeData?.charCountry as CountryKey) || null;
+      const initCharVibe = (openNodeData?.charVibe as VibeKey) || "clean";
+      const initCharExtras = (openNodeData?.charExtras as string) || "";
+      
+      setCharGender(initCharGender);
+      setCharCountry(initCharCountry);
+      setCharVibe(initCharVibe);
+      setCharExtras(initCharExtras);
+      
+      if (openNodeType === "character" && !initialPrompt) {
+        setPrompt(buildCharacterPrompt(initCharGender, initCharCountry, initCharVibe, initCharExtras));
+      }
       setAutoBuilding(false);
       setAutoPromptUsed(false);
       setT2vLibraryMediaId(null);
@@ -676,6 +686,7 @@ export function GenerationDialog() {
     }
     if (isCharacter) {
       const built = buildCharacterPrompt(charGender, charCountry, charVibe, charExtras);
+      const finalPrompt = prompt.trim() || built;
       // Stamp the picker selections directly onto the node so the detail
       // panel can show "Country: Nhật Bản · Vibe: Douyin" later. These
       // choices don't round-trip through the backend params (they're
@@ -686,6 +697,7 @@ export function GenerationDialog() {
       if (charCountry) charStamp.charCountry = charCountry;
       if (charVibe) charStamp.charVibe = charVibe;
       if (charGender) charStamp.charGender = charGender;
+      if (charExtras) charStamp.charExtras = charExtras;
       if (Object.keys(charStamp).length > 0) {
         useBoardStore.getState().updateNodeData(rfId, charStamp);
         const dbId = parseInt(rfId, 10);
@@ -694,7 +706,7 @@ export function GenerationDialog() {
         }
       }
       dispatchGeneration(rfId, {
-        prompt: built,
+        prompt: finalPrompt,
         aspectRatio,
         variantCount: variants,
       });
@@ -979,8 +991,8 @@ export function GenerationDialog() {
           </button>
         </div>
 
-        {/* Prompt — hidden when character mode shows the builder instead */}
-        {!isCharacter && (
+        {/* Prompt */}
+        {true && (
           <div className="gen-dialog__field">
             <div className="gen-dialog__label-row">
               <label className="gen-dialog__label" htmlFor="gen-prompt">
