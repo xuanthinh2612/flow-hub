@@ -147,7 +147,7 @@ export function getVideoUpstreamInfo(
     const denseMids = variants.length > 0 ? variants : (sourceMediaId ? [sourceMediaId] : []);
 
     return {
-      mode: 'i2v',
+      mode: isVideo ? 'video_continuation' : 'i2v',
       label: isVideo ? 'Nối tiếp video (i2v)' : 'Ảnh → Video (i2v)',
       sourceNode,
       sourceMediaId,

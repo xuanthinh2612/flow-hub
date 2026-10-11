@@ -143,8 +143,18 @@ export function ResultViewer() {
   // logic as `collectUpstreamRefMediaIds` at dispatch. The chip then
   // shows the exact thumbnail Flow will receive instead of always
   // defaulting to the source's "active" mediaId.
-  const REF_TYPES = new Set(["character", "image", "visual_asset"]);
-  const refSourceNodes = rfId
+  const REF_TYPES = new Set(["character", "image", "visual_asset", "Storyboard", "video"]);
+  
+  type RefSource = {
+    key: string;
+    type: string;
+    title: string;
+    mediaId: string;
+    variantIdx: number | null;
+    shortId?: string;
+  };
+
+  const refSourceNodes: RefSource[] = rfId
     ? edges
         .filter((e) => e.target === rfId)
         .map((e) => {
@@ -173,10 +183,39 @@ export function ResultViewer() {
             mediaId = variants[0] as string;
           }
           if (!mediaId) return null;
-          return { node: n, mediaId, variantIdx };
+          return {
+            key: n.id,
+            type: n.data.type,
+            title: n.data.title,
+            mediaId,
+            variantIdx,
+            shortId: n.data.shortId,
+          } as RefSource;
         })
         .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     : [];
+
+  const independentMediaIds = (data?.independentMediaIds as string[]) || [];
+  independentMediaIds.forEach((mid, idx) => {
+    refSourceNodes.push({
+      key: `indep-${mid}-${idx}`,
+      type: "image",
+      title: "Library Image",
+      mediaId: mid,
+      variantIdx: null,
+    });
+  });
+
+  const r2vAdditionalMediaIds = (data?.r2vAdditionalMediaIds as string[]) || [];
+  r2vAdditionalMediaIds.forEach((mid, idx) => {
+    refSourceNodes.push({
+      key: `r2v-add-${mid}-${idx}`,
+      type: "image",
+      title: "Library Image",
+      mediaId: mid,
+      variantIdx: null,
+    });
+  });
 
   // Slot-aware mediaId resolution. When the node has a per-variant
   // `mediaIds` array, slot index activeIdx is authoritative even if
@@ -597,27 +636,38 @@ export function ResultViewer() {
               <div className="ref-source-row">
                 {refSourceNodes.map((r) => (
                   <div
-                    key={r.node.id}
+                    key={r.key}
                     className="ref-source-chip"
                     title={
                       r.variantIdx !== null
-                        ? `${r.node.data.title} — variant ${r.variantIdx + 1}`
-                        : r.node.data.title
+                        ? `${r.title} — variant ${r.variantIdx + 1}`
+                        : r.title
                     }
                   >
-                    <img
-                      className="ref-source-chip__img"
-                      src={mediaUrl(r.mediaId)}
-                      alt={r.node.data.title}
-                    />
+                    {r.type === "video" ? (
+                      <video
+                        className="ref-source-chip__img"
+                        src={mediaUrl(r.mediaId) + "#t=999.9"}
+                        playsInline
+                        muted
+                      />
+                    ) : (
+                      <img
+                        className="ref-source-chip__img"
+                        src={mediaUrl(r.mediaId)}
+                        alt={r.title}
+                      />
+                    )}
                     {r.variantIdx !== null && (
                       <span className="ref-source-chip__variant">
                         v{r.variantIdx + 1}
                       </span>
                     )}
-                    <span className="ref-source-chip__id">
-                      #{r.node.data.shortId}
-                    </span>
+                    {r.shortId && (
+                      <span className="ref-source-chip__id">
+                        #{r.shortId}
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>

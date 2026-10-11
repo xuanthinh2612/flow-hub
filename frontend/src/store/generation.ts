@@ -10,7 +10,7 @@ import { useBoardStore, type FlowboardNodeData } from "./board";
 import { useSettingsStore, type MediaProviderKey } from "./settings";
 import { extractAndUploadLastFrame } from "../utils/videoFrame";
 
-type PollEntry = { requestId: number; timerId: ReturnType<typeof setTimeout> | null };
+type PollEntry = { requestId: string | number; timerId: ReturnType<typeof setTimeout> | null };
 
 // Everything the poll loop needs that it can't read back off the request
 // row. Both are re-derivable from `request.params`, which is why the resume
@@ -227,11 +227,11 @@ const MEDIA_PRODUCING_TYPES = new Set([
 // two chains racing to decide the node is finished. The loser's `patchNode`
 // can land after the worker committed the newer generation, which pins the
 // node to the OLDER result permanently.
-function ownsPoll(rfId: string, requestId: number): boolean {
+function ownsPoll(rfId: string, requestId: string | number): boolean {
   return useGenerationStore.getState().active[rfId]?.requestId === requestId;
 }
 
-function attachPoll(rfId: string, requestId: number, opts: PollOpts) {
+function attachPoll(rfId: string, requestId: string | number, opts: PollOpts) {
   // Cap consecutive network errors so a dead agent can't keep a poll alive
   // forever; bail to failed state after this many.
   const MAX_NETWORK_RETRIES = 8;
@@ -498,11 +498,11 @@ function attachPoll(rfId: string, requestId: number, opts: PollOpts) {
 // over rather than racing the first. Every await is a place ownership can
 // move, so every await is followed by the check.
 
-function ownsSidecarPoll(rfId: string, requestId: number): boolean {
+function ownsSidecarPoll(rfId: string, requestId: string | number): boolean {
   return useGenerationStore.getState().sidecar[rfId]?.requestId === requestId;
 }
 
-function releaseSidecarPoll(rfId: string, requestId: number) {
+function releaseSidecarPoll(rfId: string, requestId: string | number) {
   useGenerationStore.setState((s) => {
     // Guarded: a terminal chain must not delete an entry that already
     // belongs to a newer request on this node.
@@ -566,7 +566,7 @@ function sidecarDonePatch(
   };
 }
 
-function attachSidecarPoll(rfId: string, requestId: number, type: SidecarType) {
+function attachSidecarPoll(rfId: string, requestId: string | number, type: SidecarType) {
   const MAX_NETWORK_RETRIES = 8;
   let networkRetries = 0;
 
@@ -738,6 +738,19 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       mediaIds: undefined,
       mediaId: undefined,
     });
+    const dbIdToPatch = parseInt(rfId, 10);
+    if (!isNaN(dbIdToPatch)) {
+      patchNode(dbIdToPatch, {
+        status: "queued",
+        data: {
+          prompt: opts.prompt,
+          error: null,
+          variantCount,
+          mediaIds: null,
+          mediaId: null,
+        }
+      }).catch(() => {});
+    }
 
     // Create request
     const kind = opts.kind ?? "image";
@@ -769,7 +782,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           if (isOmni) {
             reqDto = await createRequest({
               type: "gen_video_omni",
-              node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
+              node_id: isNaN(nodeDbId) ? rfId : nodeDbId,
               params: {
                 prompt: opts.prompt,
                 media_provider: mediaProvider,
@@ -778,13 +791,14 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                 duration_s: settings.omniFlashDuration,
                 aspect_ratio: opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_PORTRAIT",
                 paygate_tier: opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
+                variant_count: variantCount,
               },
             });
           } else {
             // Veo r2v
             reqDto = await createRequest({
               type: "gen_video",
-              node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
+              node_id: isNaN(nodeDbId) ? rfId : nodeDbId,
               params: {
                 prompt: opts.prompt,
                 media_provider: mediaProvider,
@@ -793,6 +807,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                 aspect_ratio: opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_LANDSCAPE",
                 paygate_tier: opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
                 video_quality: settings.videoQuality,
+                variant_count: variantCount,
               },
             });
           }
@@ -815,7 +830,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           }
           reqDto = await createRequest({
             type: isT2V ? "gen_video_text" : "gen_video",
-            node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
+            node_id: isNaN(nodeDbId) ? rfId : nodeDbId,
             params: videoParams,
           });
         }
@@ -844,7 +859,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         }
         reqDto = await createRequest({
           type: "gen_image",
-          node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
+          node_id: isNaN(nodeDbId) ? rfId : nodeDbId,
           params,
         });
       }
@@ -969,7 +984,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     try {
       reqDto = await createRequest({
         type: "edit_image",
-        node_id: isNaN(nodeDbId) ? undefined : nodeDbId,
+        node_id: isNaN(nodeDbId) ? rfId : nodeDbId,
         params: {
           prompt: opts.prompt,
           media_provider: mediaProvider,

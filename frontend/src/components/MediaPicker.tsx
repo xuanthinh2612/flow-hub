@@ -11,9 +11,10 @@ interface MediaPickerProps {
   onChange: (value: any, items?: MediaItem[]) => void;
   kind?: 'image' | 'video' | 'both';
   disabled?: boolean;
+  buttonText?: string;
 }
 
-export const MediaPicker: React.FC<MediaPickerProps> = ({ value, multi = false, onChange, kind = 'image', disabled = false }) => {
+export const MediaPicker: React.FC<MediaPickerProps> = ({ value, multi = false, onChange, kind = 'image', disabled = false, buttonText }) => {
   const { openModal, closeModal } = useModal();
   const [mediaMap, setMediaMap] = useState<Record<string, MediaItem>>({});
 
@@ -70,7 +71,7 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({ value, multi = false, 
   };
 
   return (
-    <div className="picker">
+    <div className="picker" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
       {ids.map((id) => (
         <div key={id} className="pick" title={id}>
           {mediaMap[id] ? (
@@ -84,7 +85,7 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({ value, multi = false, 
         </div>
       ))}
       <button type="button" className="pick-add" onClick={openPickerModal} disabled={disabled}>
-        {ids.length && !multi ? 'Đổi' : '+ Chọn'}
+        {buttonText ? buttonText : (ids.length && !multi ? 'Đổi' : '+ Chọn')}
       </button>
     </div>
   );

@@ -6006,6 +6006,11 @@ button:disabled {
   color: #fbbf24;
   border: 1px solid rgba(245, 158, 11, 0.35);
 }
+.video-mode-pill--r2v {
+  background: rgba(249, 115, 22, 0.18);
+  color: #fb923c;
+  border: 1px solid rgba(249, 115, 22, 0.35);
+}
 
 .gen-dialog__mode-badge {
   font-size: 11px;
@@ -6029,6 +6034,11 @@ button:disabled {
   background: rgba(245, 158, 11, 0.2);
   color: #fbbf24;
   border: 1px solid rgba(245, 158, 11, 0.35);
+}
+.gen-dialog__mode-badge--r2v {
+  background: rgba(249, 115, 22, 0.2);
+  color: #fb923c;
+  border: 1px solid rgba(249, 115, 22, 0.35);
 }
 
 /* ── Source Info Box (Video modes) ────────────────────────────────────── */
@@ -6157,3 +6167,8 @@ button:disabled {
 .react-flow .react-flow__minimap-node {
   fill: #7f7f7f !important;
 }
+
+
+/* Stronger React Flow Panel Overrides */
+.react-flow__minimap, .react-flow__panel.react-flow__controls { background-color: var(--surface) !important; background: var(--surface) !important; }
+.react-flow__minimap-node { fill: #7f7f7f !important; }

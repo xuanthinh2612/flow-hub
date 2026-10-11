@@ -45,6 +45,7 @@ const REF_SOURCE_TYPES = new Set([
   // Storyboard outputs are first-class refs — they're composite images
   // that can feed downstream image / Omni-video / character nodes.
   "Storyboard",
+  "video",
 ]);
 
 function buildCharacterPrompt(
@@ -304,7 +305,18 @@ export function GenerationDialog() {
   // frame. So the dialog should show the same "Source references" chip
   // list that image targets use, and hide Veo's source-image selector.
   const isOmniVideo = isVideo && videoModelFamily === "omni_flash";
-  const actualConnectedMode = videoInfo?.mode === "i2v" ? connectedVideoMode : videoInfo?.mode;
+  const rawRefSourceNodeCount = rfId
+    ? edges
+        .filter((e) => e.target === rfId)
+        .filter((e) => {
+          const n = nodes.find((node) => node.id === e.source);
+          return n && REF_SOURCE_TYPES.has(n.data.type);
+        }).length
+    : 0;
+  const totalConnectedSources = rawRefSourceNodeCount + r2vAdditionalMediaIds.length;
+  const actualConnectedMode = videoInfo?.mode === "i2v" 
+    ? (totalConnectedSources >= 2 ? "r2v" : connectedVideoMode) 
+    : videoInfo?.mode;
   const isEffectiveR2v = isVideo && (videoInfo?.mode === "i2v" || videoInfo?.mode === "r2v") && (isOmniVideo || actualConnectedMode === "r2v");
   // Prompt nodes are text-only — clicking Generate runs auto_prompt
   // synthesis from upstream context and writes the result back to
@@ -810,10 +822,47 @@ export function GenerationDialog() {
       }
 
       // 3. Ảnh -> Video (i2v hoặc r2v)
-      // Filter the upstream variants to the user's selection
-      const picked = sourceMediaIds.filter((_, i) => selectedSourceIdx.has(i));
-      
-      const finalPicked = isEffectiveR2v ? [...picked, ...r2vAdditionalMediaIds] : picked;
+      if (isEffectiveR2v) {
+        useBoardStore.getState().updateNodeData(rfId, { extractingFrame: true, extractError: null });
+        closeGenerationDialog();
+
+        Promise.all(
+          refSourceNodes.map(async (r) => {
+            if (r.node.data.type === "video") {
+              if (!r.mediaId) throw new Error(`Node ${r.node.data.shortId} chưa có video để trích xuất`);
+              return await extractAndUploadLastFrame(r.mediaId);
+            }
+            return r.mediaId;
+          })
+        ).then((upstreamMids) => {
+          const finalPicked = [...upstreamMids.filter(Boolean) as string[], ...r2vAdditionalMediaIds];
+          const useMulti = finalPicked.length > 1;
+
+          const dbId = parseInt(rfId, 10);
+          useBoardStore.getState().updateNodeData(rfId, { r2vAdditionalMediaIds, extractingFrame: false });
+          if (!isNaN(dbId)) {
+            patchNode(dbId, { data: { r2vAdditionalMediaIds } }).catch(() => {});
+          }
+
+          dispatchGeneration(rfId, {
+            prompt: videoPrompt,
+            aspectRatio,
+            kind: "video",
+            videoMode: "r2v",
+            sourceMediaId: useMulti ? undefined : finalPicked[0],
+            sourceMediaIds: finalPicked,
+            variantCount: variants,
+          });
+        }).catch((err: any) => {
+          const msg = err?.message || "Lỗi khi trích xuất frame cuối từ video upstream";
+          useBoardStore.getState().updateNodeData(rfId, { extractingFrame: false, extractError: msg });
+          useGenerationStore.setState({ error: `Lỗi trích xuất frame: ${msg}` });
+        });
+        return;
+      }
+
+      // For i2v
+      const finalPicked = sourceMediaIds.filter((_, i) => selectedSourceIdx.has(i));
       const useMulti = finalPicked.length > 1;
 
       if (videoInfo?.mode === "i2v") {
@@ -824,14 +873,6 @@ export function GenerationDialog() {
         }
       }
 
-      if (isEffectiveR2v) {
-        const dbId = parseInt(rfId, 10);
-        useBoardStore.getState().updateNodeData(rfId, { r2vAdditionalMediaIds });
-        if (!isNaN(dbId)) {
-          patchNode(dbId, { data: { r2vAdditionalMediaIds } }).catch(() => {});
-        }
-      }
-
       dispatchGeneration(rfId, {
         prompt: videoPrompt,
         aspectRatio,
@@ -839,7 +880,7 @@ export function GenerationDialog() {
         videoMode: actualConnectedMode as "i2v" | "r2v",
         sourceMediaId: useMulti ? undefined : finalPicked[0],
         sourceMediaIds: useMulti ? finalPicked : undefined,
-        variantCount: finalPicked.length || 1,
+        variantCount: actualConnectedMode === "r2v" ? variants : (useMulti ? finalPicked.length * variants : variants),
       });
       closeGenerationDialog();
       return;
@@ -957,7 +998,6 @@ export function GenerationDialog() {
               ref={firstFocusRef}
               className="gen-dialog__textarea"
               rows={5}
-              maxLength={500}
               value={prompt}
               onChange={(e) => {
                 setPrompt(e.target.value);
@@ -1078,7 +1118,6 @@ export function GenerationDialog() {
                 ref={firstFocusRef}
                 className="gen-dialog__textarea"
                 rows={3}
-                maxLength={200}
                 value={charExtras}
                 disabled={isWorking}
                 onChange={(e) => setCharExtras(e.target.value)}
@@ -1109,7 +1148,7 @@ export function GenerationDialog() {
                     </select>
                   )}
                   {independentVideoMediaIds.length > 1 && (
-                    <span className="source-select-mini" style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fff', border: 'none', display: 'inline-block' }}>
+                    <span className="source-select-mini" style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fb923c', border: 'none', display: 'inline-block' }}>
                       Ingredients (r2v)
                     </span>
                   )}
@@ -1168,25 +1207,31 @@ export function GenerationDialog() {
               </div>
             )}
 
-            {videoInfo?.mode === "i2v" && (
+            {(videoInfo?.mode === "i2v" || videoInfo?.mode === "r2v") && (
               <>
                 <div className="gen-dialog__label-row">
                   <span className="gen-dialog__label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     Chế độ:
-                    <select
-                      className="source-select-mini"
-                      value={connectedVideoMode}
-                      onChange={(e) => setConnectedVideoMode(e.target.value as "i2v" | "r2v")}
-                      disabled={isWorking}
-                      style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fff', border: 'none' }}
-                    >
-                      <option value="i2v">Nối tiếp (i2v)</option>
-                      <option value="r2v">Ingredients (r2v)</option>
-                    </select>
+                    {videoInfo?.mode === "i2v" && totalConnectedSources <= 1 ? (
+                      <select
+                        className="source-select-mini"
+                        value={connectedVideoMode}
+                        onChange={(e) => setConnectedVideoMode(e.target.value as "i2v" | "r2v")}
+                        disabled={isWorking}
+                        style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fff', border: 'none' }}
+                      >
+                        <option value="i2v">Nối tiếp (i2v)</option>
+                        <option value="r2v">Ingredients (r2v)</option>
+                      </select>
+                    ) : (
+                      <span className="source-select-mini" style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fb923c', border: 'none', display: 'inline-block' }}>
+                        Ingredients (r2v)
+                      </span>
+                    )}
                   </span>
                 </div>
                 
-                {connectedVideoMode === "i2v" && (
+                {actualConnectedMode === "i2v" && (
                   <>
                     <div className="gen-dialog__label-row" style={{ marginTop: '10px' }}>
                       <span className="gen-dialog__label">
@@ -1331,11 +1376,15 @@ export function GenerationDialog() {
                           setOpenVariantPicker(isPickerOpen ? null : r.edgeId)
                         }
                       >
-                        <img
-                          className="ref-source-chip__img"
-                          src={mediaUrl(r.mediaId)}
-                          alt={r.node.data.title}
-                        />
+                        {r.node.data.type === "video" ? (
+                          <video className="ref-source-chip__img" src={mediaUrl(r.mediaId)} muted />
+                        ) : (
+                          <img
+                            className="ref-source-chip__img"
+                            src={mediaUrl(r.mediaId)}
+                            alt={r.node.data.title}
+                          />
+                        )}
                         <span className="ref-source-chip__variant">
                           v{(r.variantIdx ?? 0) + 1}
                         </span>
@@ -1345,11 +1394,15 @@ export function GenerationDialog() {
                       </button>
                     ) : (
                       <div className="ref-source-chip" title={tooltip}>
-                        <img
-                          className="ref-source-chip__img"
-                          src={mediaUrl(r.mediaId)}
-                          alt={r.node.data.title}
-                        />
+                        {r.node.data.type === "video" ? (
+                          <video className="ref-source-chip__img" src={mediaUrl(r.mediaId)} muted />
+                        ) : (
+                          <img
+                            className="ref-source-chip__img"
+                            src={mediaUrl(r.mediaId)}
+                            alt={r.node.data.title}
+                          />
+                        )}
                         <span className="ref-source-chip__id">
                           #{r.node.data.shortId}
                         </span>
@@ -1374,11 +1427,15 @@ export function GenerationDialog() {
                               title={`Variant ${i + 1}`}
                               aria-current={isCurrent ? "true" : undefined}
                             >
-                              <img
-                                className="ref-source-chip__picker-img"
-                                src={mediaUrl(mid)}
-                                alt={`Variant ${i + 1}`}
-                              />
+                              {r.node.data.type === "video" ? (
+                                <video className="ref-source-chip__picker-img" src={mediaUrl(mid)} muted />
+                              ) : (
+                                <img
+                                  className="ref-source-chip__picker-img"
+                                  src={mediaUrl(mid)}
+                                  alt={`Variant ${i + 1}`}
+                                />
+                              )}
                               <span className="ref-source-chip__picker-label">
                                 v{i + 1}
                               </span>
@@ -1390,27 +1447,19 @@ export function GenerationDialog() {
                   </div>
                 );
               })}
-            </div>
-          </div>
-        )}
-
-        {/* Additional Images for R2V from Library */}
-        {isEffectiveR2v && (
-          <div className="gen-dialog__field">
-            <span className="gen-dialog__label">
-              Ảnh bổ sung từ thư viện:
-            </span>
-            <div style={{ marginTop: 10 }}>
-              <MediaPicker
-                kind="image"
-                multi={true}
-                value={r2vAdditionalMediaIds}
-                disabled={isWorking}
-                onChange={(ids) => {
-                  const newIds = Array.isArray(ids) ? ids : (ids ? [ids] : []);
-                  setR2vAdditionalMediaIds(newIds);
-                }}
-              />
+              {isEffectiveR2v && (
+                <MediaPicker
+                  kind="image"
+                  multi={true}
+                  value={r2vAdditionalMediaIds}
+                  disabled={isWorking}
+                  onChange={(ids) => {
+                    const newIds = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+                    setR2vAdditionalMediaIds(newIds);
+                  }}
+                  buttonText="+ Thêm ảnh"
+                />
+              )}
             </div>
           </div>
         )}
@@ -1513,9 +1562,11 @@ export function GenerationDialog() {
               className="gen-dialog__select"
               disabled={isWorking}
               value={
-                videoModelFamily === "omni_flash"
-                  ? "omni"
-                  : `veo:${videoQuality}`
+                (() => {
+                  return videoModelFamily === "omni_flash"
+                    ? "omni"
+                    : `veo:${videoQuality}`;
+                })()
               }
               onChange={(e) => {
                 const v = e.target.value;
@@ -1536,8 +1587,7 @@ export function GenerationDialog() {
                     </option>
                   );
                 }
-                const locked =
-                  m.ultraOnly && paygateTier !== "PAYGATE_TIER_TWO";
+                const locked = m.ultraOnly && paygateTier !== "PAYGATE_TIER_TWO";
                 return (
                   <option
                     key={`veo:${m.quality}`}

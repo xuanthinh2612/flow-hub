@@ -11,8 +11,10 @@ export async function patchEdge(id: number, data: any) {
   return data;
 }
 
+import { patchNode as storePatchNode } from "../store/dummyBoardApi";
+
 export async function patchNode(id: number, data: any) {
-  return data;
+  return storePatchNode(id, data);
 }
 
 export async function uploadImage(file: File, projectId?: string, dbId?: number) {

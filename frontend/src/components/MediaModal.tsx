@@ -12,7 +12,7 @@ const USES = [
   { label: 'Ảnh đầu (Ảnh → Video)', page: 'video' as const, field: 'starts', patch: { mode: 'i2v' } },
   { label: 'Ảnh đầu (đầu + cuối)', page: 'video' as const, field: 'start', multi: false, patch: { mode: 'first_last' } },
   { label: 'Ảnh cuối (đầu + cuối)', page: 'video' as const, field: 'end', multi: false, patch: { mode: 'first_last' } },
-  { label: 'Ingredient (Omni)', page: 'video' as const, field: 'refs', patch: { mode: 'r2v' } },
+  { label: 'Ingredient (r2v)', page: 'video' as const, field: 'refs', patch: { mode: 'r2v' } },
 ];
 
 export const MediaModalContent: React.FC<{ mediaId: string; onDeleted?: () => void }> = ({

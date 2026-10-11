@@ -310,6 +310,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           // batch where some variants were blocked reloads looking
           // clean. refreshBoardState already mapped it; these two did not.
           error: n.data["error"] as string | undefined,
+          independentMediaIds: n.data["independentMediaIds"] as string[] | undefined,
+          independentVideoMode: n.data["independentVideoMode"] as string | undefined,
+          connectedVideoMode: n.data["connectedVideoMode"] as string | undefined,
+          r2vAdditionalMediaIds: n.data["r2vAdditionalMediaIds"] as string[] | undefined,
+          t2vSourceId: n.data["t2vSourceId"] as string | undefined,
         },
       }));
 
@@ -380,6 +385,13 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           // batch where some variants were blocked reloads looking
           // clean. refreshBoardState already mapped it; these two did not.
           error: n.data["error"] as string | undefined,
+          
+          // Video generation specific properties
+          independentMediaIds: n.data["independentMediaIds"] as string[] | undefined,
+          independentVideoMode: n.data["independentVideoMode"] as string | undefined,
+          connectedVideoMode: n.data["connectedVideoMode"] as string | undefined,
+          r2vAdditionalMediaIds: n.data["r2vAdditionalMediaIds"] as string[] | undefined,
+          t2vSourceId: n.data["t2vSourceId"] as string | undefined,
         },
       }));
       const edges: Edge[] = detail.edges.map(edgeFromDto);
@@ -473,6 +485,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           charGender: n.data["charGender"] as string | undefined,
           storyboardGrid: n.data["storyboardGrid"] as StoryboardGrid | undefined,
           error: n.data["error"] as string | undefined,
+          independentMediaIds: n.data["independentMediaIds"] as string[] | undefined,
+          independentVideoMode: n.data["independentVideoMode"] as string | undefined,
+          connectedVideoMode: n.data["connectedVideoMode"] as string | undefined,
+          r2vAdditionalMediaIds: n.data["r2vAdditionalMediaIds"] as string[] | undefined,
+          t2vSourceId: n.data["t2vSourceId"] as string | undefined,
         },
       }));
       const edges: Edge[] = detail.edges.map(edgeFromDto);

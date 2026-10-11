@@ -101,6 +101,7 @@ const persisted = loadPersisted();
 
 const VALID_VIDEO_QUALITIES: VideoQuality[] = ["fast", "lite", "quality", "lite_relaxed"];
 const VALID_MEDIA_PROVIDERS: MediaProviderKey[] = ["flow", "muse"];
+const VALID_OMNI_DURATIONS = [4, 6, 8, 10];
 
 function snapshotPersist(get: () => SettingsState): PersistShape {
   return {
@@ -119,7 +120,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       ? persisted.videoQuality
       : "fast",
   videoModel: persisted.videoModel ?? "veo",
-  omniFlashDuration: persisted.omniFlashDuration ?? 4,
+  omniFlashDuration: 
+    typeof persisted.omniFlashDuration === "number" && VALID_OMNI_DURATIONS.includes(persisted.omniFlashDuration)
+      ? persisted.omniFlashDuration
+      : (typeof persisted.omniFlashDuration === "string" && VALID_OMNI_DURATIONS.includes(parseInt(persisted.omniFlashDuration, 10)))
+        ? parseInt(persisted.omniFlashDuration, 10) as OmniFlashDuration
+        : 4,
   mediaProvider:
     persisted.mediaProvider && VALID_MEDIA_PROVIDERS.includes(persisted.mediaProvider)
       ? persisted.mediaProvider

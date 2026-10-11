@@ -194,10 +194,10 @@ export async function ensureBoardProject(_boardId?: number): Promise<{ flow_proj
 }
 
 interface CanvasRequestRecord {
-  id: number;
+  id: string | number;
   jobId: string;
   type: string;
-  nodeId?: number;
+  nodeId?: number | string;
   params: Record<string, any>;
   createdAt: number;
 }
@@ -207,7 +207,7 @@ const _requests: CanvasRequestRecord[] = loadStorage(STORAGE_REQUESTS, []);
 
 export async function createRequest(input: {
   type: string;
-  node_id?: number;
+  node_id?: number | string;
   params: Record<string, any>;
 }): Promise<any> {
   const { type, node_id, params } = input;
@@ -216,29 +216,56 @@ export async function createRequest(input: {
   if (type === "gen_video_text") {
     spec = {
       type: "t2v",
+      family: "veo",
       prompt: params.prompt,
       aspect: params.aspect_ratio === "VIDEO_ASPECT_RATIO_PORTRAIT" ? "9:16" : "16:9",
       count: Number(params.variant_count) || 1,
     };
+    if (params.video_quality) {
+      spec.model = `veo_3_1_t2v_${params.video_quality}`;
+    }
   } else if (type === "gen_video") {
-    const startIds = (Array.isArray(params.start_media_ids) && params.start_media_ids.length > 0)
-      ? params.start_media_ids
-      : params.start_media_id ? [params.start_media_id] : [];
-    spec = {
-      type: "i2v",
-      prompt: params.prompt,
-      aspect: params.aspect_ratio === "VIDEO_ASPECT_RATIO_PORTRAIT" ? "9:16" : "16:9",
-      count: startIds.length || 1,
-      start_media_ids: startIds,
-    };
+    if (params.ref_media_ids && params.ref_media_ids.length > 0) {
+      spec = {
+        type: "r2v",
+        family: "veo",
+        prompt: params.prompt,
+        aspect: params.aspect_ratio === "VIDEO_ASPECT_RATIO_PORTRAIT" ? "9:16" : "16:9",
+        ref_media_ids: params.ref_media_ids,
+        count: Number(params.variant_count) || 1,
+      };
+      if (params.video_quality) {
+        spec.model = `veo_3_1_r2v_${params.video_quality}`;
+      }
+    } else {
+      const startIds = (Array.isArray(params.start_media_ids) && params.start_media_ids.length > 0)
+        ? params.start_media_ids
+        : params.start_media_id ? [params.start_media_id] : [];
+      spec = {
+        type: "i2v",
+        family: "veo",
+        prompt: params.prompt,
+        aspect: params.aspect_ratio === "VIDEO_ASPECT_RATIO_PORTRAIT" ? "9:16" : "16:9",
+        count: startIds.length || 1,
+        start_media_ids: startIds,
+      };
+      if (params.video_quality) {
+        spec.model = `veo_3_1_i2v_${params.video_quality}`;
+      }
+    }
   } else if (type === "gen_video_omni") {
     spec = {
       type: "r2v",
+      family: "omni_flash",
       prompt: params.prompt,
       aspect: params.aspect_ratio === "VIDEO_ASPECT_RATIO_PORTRAIT" ? "9:16" : "16:9",
       ref_media_ids: params.ref_media_ids || [],
-      duration: params.duration_s ? `${params.duration_s}s` : undefined,
+      duration: params.duration_s,
+      count: Number(params.variant_count) || 1,
     };
+    if (params.duration_s) {
+      spec.model = `abra_r2v_${params.duration_s}s`;
+    }
   } else if (type === "gen_image") {
     let aspect = "16:9";
     if (params.aspect_ratio === "IMAGE_ASPECT_RATIO_PORTRAIT") aspect = "9:16";
@@ -264,7 +291,15 @@ export async function createRequest(input: {
     body: spec,
   });
 
-  const reqId = nextId();
+  const generateVideoId = () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let result = '';
+    for (let i = 0; i < 32; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  };
+  const reqId = generateVideoId();
   const reqRecord: CanvasRequestRecord = {
     id: reqId,
     jobId: job.id,
@@ -286,7 +321,7 @@ export async function createRequest(input: {
   };
 }
 
-export async function getRequest(id: number): Promise<any> {
+export async function getRequest(id: string | number): Promise<any> {
   const record = _requests.find((r) => r.id === id);
   if (!record) {
     return { id, status: "failed", type: "", params: {}, result: {}, error: "Không tìm thấy request" };
@@ -296,7 +331,9 @@ export async function getRequest(id: number): Promise<any> {
     const job = await api<JobItem>(`/api/jobs/${record.jobId}`);
     const isDone = job.status === "done";
     const isPartial = job.status === "partial";
-    const isFailed = job.status === "failed" || job.status === "timeout" || job.status === "canceled";
+    const isFailed = job.status === "failed";
+    const isTimeout = job.status === "timeout";
+    const isCanceled = job.status === "canceled";
     const isRunning = job.status === "running" || job.status === "polling" || job.status === "queued";
 
     const mediaIds = (job.results || []).map((r) => r.media_id);
@@ -304,6 +341,8 @@ export async function getRequest(id: number): Promise<any> {
     let status = "running";
     if (isDone || isPartial) status = "done";
     else if (isFailed) status = "failed";
+    else if (isTimeout) status = "timeout";
+    else if (isCanceled) status = "canceled";
     else if (isRunning) status = "running";
 
     return {
@@ -330,7 +369,20 @@ export async function getRequest(id: number): Promise<any> {
 }
 
 export async function listBoardRequests(_boardId?: number, _opts?: any): Promise<{ items: any[] }> {
-  return { items: _requests };
+  // We mock this by returning recent requests, newest first. 
+  // This ensures resumeActiveRequests picks the latest request for a node.
+  const recent = Date.now() - 10 * 60 * 1000;
+  const activeItems = _requests
+    .filter(r => r.createdAt > recent)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map(r => ({
+      id: r.id,
+      type: r.type,
+      status: "queued",
+      node_id: r.nodeId,
+      params: r.params,
+    }));
+  return { items: activeItems };
 }
 
 // ── Pipeline stubs ─────────────────────────────────────────────────────

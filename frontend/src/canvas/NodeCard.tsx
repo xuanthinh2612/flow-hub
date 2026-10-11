@@ -972,8 +972,13 @@ function VideoBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
     posterIds =
       videoInfo.sourceNode.data.mediaIds ??
       (videoInfo.sourceNode.data.mediaId ? [videoInfo.sourceNode.data.mediaId] : []);
-  } else if (videoInfo.mode === "t2v" && typeof data.t2vSourceId === "string") {
-    posterIds = [data.t2vSourceId];
+  } else if (videoInfo.mode === "t2v") {
+    const independentMediaIds = data.independentMediaIds as string[] | undefined;
+    if (independentMediaIds && independentMediaIds.length > 0) {
+      posterIds = independentMediaIds;
+    } else if (typeof data.t2vSourceId === "string") {
+      posterIds = [data.t2vSourceId];
+    }
   }
 
   const isExtracting = data.extractingFrame === true;
@@ -1528,16 +1533,36 @@ export function NodeCard(props: NodeProps<FlowNode>) {
       <div className="node-header">
         <span className="node-icon" aria-hidden="true">{ICON[data.type] ?? "□"}</span>
         <span className="node-title">{data.title}</span>
-        {videoInfo && (
-          <span
-            className={`video-mode-pill video-mode-pill--${videoInfo.mode}`}
-            title={videoInfo.label}
-          >
-            {videoInfo.mode === "t2v" && (data.t2vSourceId ? "i2v" : "t2v")}
-            {videoInfo.mode === "i2v" && "i2v"}
-            {videoInfo.mode === "video_continuation" && "i2v"}
-          </span>
-        )}
+        {videoInfo && (() => {
+          let displayMode = videoInfo.mode;
+          if (videoInfo.mode === "t2v") {
+            const independentMediaIds = data.independentMediaIds as string[] | undefined;
+            const independentVideoMode = data.independentVideoMode as string | undefined;
+            if (independentMediaIds && independentMediaIds.length > 1) {
+              displayMode = "r2v";
+            } else if (independentMediaIds && independentMediaIds.length === 1) {
+              displayMode = (independentVideoMode as "i2v" | "r2v") || "i2v";
+            } else if (data.t2vSourceId) {
+              displayMode = "i2v";
+            }
+          } else if (videoInfo.mode === "i2v" || videoInfo.mode === "video_continuation") {
+            const connectedVideoMode = data.connectedVideoMode as string | undefined;
+            const r2vAdditionalMediaIds = data.r2vAdditionalMediaIds as string[] | undefined;
+            if ((r2vAdditionalMediaIds && r2vAdditionalMediaIds.length > 0) || connectedVideoMode === "r2v") {
+              displayMode = "r2v";
+            } else {
+              displayMode = "i2v";
+            }
+          }
+          return (
+            <span
+              className={`video-mode-pill video-mode-pill--${displayMode}`}
+              title={videoInfo.label}
+            >
+              {displayMode}
+            </span>
+          );
+        })()}
         {llmBusy && (
           // Compact pill so the busy state reads at a glance even if the
           // body is collapsed. Title is contextual: composing vs. analysing.
