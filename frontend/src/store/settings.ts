@@ -48,6 +48,8 @@ export const OMNI_FLASH_CREDIT_COST: Record<4 | 6 | 8 | 10, number> = {
 };
 export type OmniFlashDuration = 4 | 6 | 8 | 10;
 export const OMNI_FLASH_DURATIONS: OmniFlashDuration[] = [4, 6, 8, 10];
+export type OmniFlashResolution = "360p" | "720p";
+export const OMNI_FLASH_RESOLUTIONS: OmniFlashResolution[] = ["360p", "720p"];
 
 // Generation backend. "flow" = the existing Chrome-extension → Google
 // Flow path. "muse" = delegated to a Pax worker via the provider-job
@@ -60,11 +62,13 @@ interface SettingsState {
   videoQuality: VideoQuality;
   videoModel: VideoModelFamily;
   omniFlashDuration: OmniFlashDuration;
+  omniFlashResolution: OmniFlashResolution;
   mediaProvider: MediaProviderKey;
   setImageModel(model: ImageModelKey): void;
   setVideoQuality(q: VideoQuality): void;
   setVideoModel(m: VideoModelFamily): void;
   setOmniFlashDuration(d: OmniFlashDuration): void;
+  setOmniFlashResolution(r: OmniFlashResolution): void;
   setMediaProvider(p: MediaProviderKey): void;
 }
 
@@ -75,6 +79,7 @@ interface PersistShape {
   videoQuality?: VideoQuality;
   videoModel?: VideoModelFamily;
   omniFlashDuration?: OmniFlashDuration;
+  omniFlashResolution?: OmniFlashResolution;
   mediaProvider?: MediaProviderKey;
 }
 
@@ -109,6 +114,7 @@ function snapshotPersist(get: () => SettingsState): PersistShape {
     videoQuality: get().videoQuality,
     videoModel: get().videoModel,
     omniFlashDuration: get().omniFlashDuration,
+    omniFlashResolution: get().omniFlashResolution,
     mediaProvider: get().mediaProvider,
   };
 }
@@ -126,6 +132,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       : (typeof persisted.omniFlashDuration === "string" && VALID_OMNI_DURATIONS.includes(parseInt(persisted.omniFlashDuration, 10)))
         ? parseInt(persisted.omniFlashDuration, 10) as OmniFlashDuration
         : 4,
+  omniFlashResolution:
+    persisted.omniFlashResolution && OMNI_FLASH_RESOLUTIONS.includes(persisted.omniFlashResolution)
+      ? persisted.omniFlashResolution
+      : "720p",
   mediaProvider:
     persisted.mediaProvider && VALID_MEDIA_PROVIDERS.includes(persisted.mediaProvider)
       ? persisted.mediaProvider
@@ -144,6 +154,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
   setOmniFlashDuration(d) {
     set({ omniFlashDuration: d });
+    persist(snapshotPersist(get));
+  },
+  setOmniFlashResolution(r) {
+    set({ omniFlashResolution: r });
     persist(snapshotPersist(get));
   },
   setMediaProvider(p) {

@@ -12,7 +12,4 @@ services:
       FLOWHUB_WORKER_TOKEN: ${FLOWHUB_WORKER_TOKEN:-}
       FLOWHUB_API_KEY: ${FLOWHUB_API_KEY:-}
     volumes:
-      - flowhub_data:/app/data
-
-volumes:
-  flowhub_data:
+      - ${FLOWHUB_DATA_DIR:-./data}:/app/data

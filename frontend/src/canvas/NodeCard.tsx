@@ -3,8 +3,7 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { useBoardStore, type FlowboardNodeData, type FlowNode } from "../store/board";
 import { useGenerationStore } from "../store/generation";
 import React from "react";
-import { mediaUrl, patchEdge, patchNode, uploadImage, uploadImageFromUrl, requestAutoBrief } from "./dummyApi";
-// import { useReferencesStore } from "../store/references";
+import { mediaUrl, patchEdge, patchNode, uploadImage, uploadImageFromUrl } from "./canvasApi";
 import {
   normaliseStoryboardGrid,
   resolveStoryboardLayout,
@@ -100,7 +99,6 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
     }
     // Background vision call — fire-and-forget. Sets aiBrief on the node
     // when it returns; failure is silent.
-    requestAutoBrief(rfId, newMediaId);
   }
 
   async function uploadOwn(file: File) {
@@ -113,7 +111,7 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
         return;
       }
       const dbId = parseInt(rfId, 10);
-      const resp = await uploadImage(file, projectId, isNaN(dbId) ? undefined : dbId);
+      const resp = await uploadImage(file, projectId, isNaN(dbId) ? undefined : dbId, useBoardStore.getState().boardPublicId ?? undefined);
       persistMedia(resp.media_id, resp.aspect_ratio);
     } catch (err) {
       setError(err instanceof Error ? err.message : "upload failed");
@@ -153,7 +151,7 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
   }
 
   function openGenerate() {
-    useGenerationStore.getState().openGenerationDialog(rfId, data.prompt ?? "");
+    useGenerationStore.getState().openGenerationDialog(rfId, data.generation?.prompt ?? "");
   }
 
   // Filled state — show the avatar circle. Drag-drop on the avatar replaces it.
@@ -180,22 +178,6 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
           {uploading && <span className="character-drop__overlay">…</span>}
         </div>
         <BriefHint data={data} />
-        <button
-          type="button"
-          className="visual-asset__action"
-          onClick={(e) => {
-            e.stopPropagation();
-            saveTileToLibrary({
-              mediaId,
-              nodeType: data.type,
-              data,
-            });
-          }}
-          title="Save this character to the library"
-          aria-label="Save to library"
-        >
-          ★ Save
-        </button>
         <input
           ref={fileInputRef}
           type="file"
@@ -257,38 +239,6 @@ function CharacterBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }
   );
 }
 
-// ── Reference-library save helpers ────────────────────────────────────────
-//
-// Maps a FlowboardNodeData.type → the `kind` enum stored on a Reference
-// row. Storyboard nodes are containers — each saved tile is one *shot*
-// of the board, so we use the "storyboard_shot" kind there to leave
-// room for shot-specific UX in the library later (e.g. surfacing the
-// shot index, or grouping by parent storyboard).
-type ReferenceKind = "image" | "character" | "visual_asset" | "storyboard_shot";
-
-function referenceKindFor(nodeType: string): ReferenceKind {
-  if (nodeType === "Storyboard") return "storyboard_shot";
-  if (nodeType === "character") return "character";
-  if (nodeType === "visual_asset") return "visual_asset";
-  return "image";
-}
-
-/** Fire-and-forget save of a tile's media into the reference library.
- * Errors surface via useReferencesStore.error; UI doesn't need to
- * await for the save to succeed before letting the user keep working. */
-function saveTileToLibrary(opts: {
-  mediaId: string;
-  nodeType: string;
-  data: FlowboardNodeData;
-}) {
-  const { mediaId, nodeType, data } = opts;
-  const label =
-    typeof data.aiBrief === "string" && data.aiBrief.trim().length > 0
-      ? data.aiBrief.slice(0, 80)
-      : `#${data.shortId}`;
-
-}
-
 const MAX_IMG_RETRIES = 5;
 
 function tileCountFor(data: FlowboardNodeData): number {
@@ -305,7 +255,6 @@ function ImageTile({
   alt,
   onClick,
   onUseAsRef,
-  onSaveToLibrary,
 }: {
   rfId: string;
   mediaId: string | undefined;
@@ -318,11 +267,6 @@ function ImageTile({
    * AND has a downstream image/video target — keeps the affordance
    * scoped to cases where it actually does something. */
   onUseAsRef?: () => void;
-  /** When provided, render a "★" overlay (top-right corner, opposite
-   * the "Use →" affordance) that snapshots this tile's media + aiBrief
-   * into the cross-board reference library. Parents only pass this when
-   * the tile has a real mediaId — saving a placeholder makes no sense. */
-  onSaveToLibrary?: () => void;
 }) {
   const [attempt, setAttempt] = useState(0);
   const [loaded, setLoaded] = useState(false);
@@ -406,24 +350,6 @@ function ImageTile({
           Use →
         </button>
       )}
-      {onSaveToLibrary && (
-        // ★ overlay — top-right corner, opposite the "Use →" chip in
-        // the bottom-right. Fire-and-forget save into the cross-board
-        // reference library. Same stopPropagation pattern so clicking
-        // the star doesn't also open the result viewer.
-        <button
-          type="button"
-          className="thumbnail-tile__save-btn"
-          onClick={(e) => {
-            e.stopPropagation();
-            onSaveToLibrary();
-          }}
-          title="Save this variant to the library"
-          aria-label="Save to library"
-        >
-          ★
-        </button>
-      )}
     </div>
   );
 }
@@ -467,7 +393,7 @@ function collectGenTargets(srcRfId: string): VariantTarget[] {
       targetRfId: t.id,
       title: t.data.title || `#${t.data.shortId}`,
       kind: t.data.type as "image" | "video",
-      hasPrompt: typeof t.data.prompt === "string" && t.data.prompt.trim().length > 0,
+      hasPrompt: typeof t.data.generation?.prompt === "string" && t.data.generation?.prompt.trim().length > 0,
     });
   }
   return out;
@@ -498,7 +424,7 @@ async function applyVariantToTarget(variantIdx: number, target: VariantTarget) {
     .getState()
     .nodes.find((n) => n.id === target.targetRfId);
   if (!targetNode) return;
-  const prompt = (targetNode.data.prompt ?? "").trim();
+  const prompt = (targetNode.data.generation?.prompt ?? "").trim();
   if (!prompt) {
     useGenerationStore.getState().openGenerationDialog(target.targetRfId, "");
     return;
@@ -506,8 +432,8 @@ async function applyVariantToTarget(variantIdx: number, target: VariantTarget) {
   await useGenerationStore.getState().dispatchGeneration(target.targetRfId, {
     prompt,
     kind: target.kind,
-    aspectRatio: targetNode.data.aspectRatio,
-    variantCount: targetNode.data.variantCount,
+    aspectRatio: targetNode.data.generation?.aspectRatio,
+    variantCount: targetNode.data.generation?.variants,
   });
 }
 
@@ -595,7 +521,6 @@ function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
         },
       }).catch(() => {});
     }
-    requestAutoBrief(rfId, newMediaId);
   }
 
   async function uploadOwn(file: File) {
@@ -608,7 +533,7 @@ function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
         return;
       }
       const dbId = parseInt(rfId, 10);
-      const resp = await uploadImage(file, projectId, isNaN(dbId) ? undefined : dbId);
+      const resp = await uploadImage(file, projectId, isNaN(dbId) ? undefined : dbId, useBoardStore.getState().boardPublicId ?? undefined);
       persistMedia(resp.media_id, resp.aspect_ratio);
     } catch (err) {
       setError(err instanceof Error ? err.message : "upload failed");
@@ -648,7 +573,7 @@ function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
   }
 
   function openGenerate() {
-    useGenerationStore.getState().openGenerationDialog(rfId, data.prompt ?? "");
+    useGenerationStore.getState().openGenerationDialog(rfId, data.generation?.prompt ?? "");
   }
 
   const hiddenFileInput = (
@@ -744,16 +669,6 @@ function ImageBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
         onUseAsRef={
           isMultiVariant && mid && !isProcessing
             ? () => onUseVariantClick(i)
-            : undefined
-        }
-        onSaveToLibrary={
-          mid
-            ? () =>
-                saveTileToLibrary({
-                  mediaId: mid,
-                  nodeType: data.type,
-                  data,
-                })
             : undefined
         }
       />
@@ -973,11 +888,11 @@ function VideoBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
       videoInfo.sourceNode.data.mediaIds ??
       (videoInfo.sourceNode.data.mediaId ? [videoInfo.sourceNode.data.mediaId] : []);
   } else if (videoInfo.mode === "t2v") {
-    const independentMediaIds = data.independentMediaIds as string[] | undefined;
+    const independentMediaIds = data.generation?.independentVideoMediaIds as string[] | undefined;
     if (independentMediaIds && independentMediaIds.length > 0) {
       posterIds = independentMediaIds;
-    } else if (typeof data.t2vSourceId === "string") {
-      posterIds = [data.t2vSourceId];
+    } else if (typeof data.generation?.t2vSourceId === "string") {
+      posterIds = [data.generation?.t2vSourceId];
     }
   }
 
@@ -993,7 +908,7 @@ function VideoBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
     const onClick =
       mid || slotBlocked
         ? () => useGenerationStore.getState().openResultViewer(rfId, i)
-        : () => useGenerationStore.getState().openGenerationDialog(rfId, data.prompt ?? "");
+        : () => useGenerationStore.getState().openGenerationDialog(rfId, data.generation?.prompt ?? "");
     // Pick the i-th source variant if available; fall back to the
     // first non-null source for single-source i2v where every video
     // shares it.
@@ -1071,7 +986,6 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
         },
       }).catch(() => {});
     }
-    requestAutoBrief(rfId, newMediaId);
   }
 
   async function uploadOwn(file: File) {
@@ -1084,7 +998,7 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
         return;
       }
       const dbId = parseInt(rfId, 10);
-      const resp = await uploadImage(file, projectId, isNaN(dbId) ? undefined : dbId);
+      const resp = await uploadImage(file, projectId, isNaN(dbId) ? undefined : dbId, useBoardStore.getState().boardPublicId ?? undefined);
       persistMedia(resp.media_id, resp.aspect_ratio);
     } catch (err) {
       setError(err instanceof Error ? err.message : "upload failed");
@@ -1128,7 +1042,7 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
         setError("no project");
         return;
       }
-      const resp = await uploadImage(file, projectId);
+      const resp = await uploadImage(file, projectId, undefined, useBoardStore.getState().boardPublicId ?? undefined);
       setRefMediaId(resp.media_id);
       setRefRefreshKey((k) => k + 1);
     } catch (err) {
@@ -1149,7 +1063,7 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
   }
 
   function openGenerate() {
-    useGenerationStore.getState().openGenerationDialog(rfId, data.prompt ?? "");
+    useGenerationStore.getState().openGenerationDialog(rfId, data.generation?.prompt ?? "");
   }
 
   if (!mediaId) {
@@ -1268,24 +1182,6 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
         )}
       </div>
       <BriefHint data={data} />
-      {!isProcessing && (
-        <button
-          type="button"
-          className="visual-asset__action"
-          onClick={(e) => {
-            e.stopPropagation();
-            saveTileToLibrary({
-              mediaId,
-              nodeType: data.type,
-              data,
-            });
-          }}
-          title="Save this asset to the library"
-          aria-label="Save to library"
-        >
-          ★ Save
-        </button>
-      )}
       {refineOpen && (
         <div className="visual-asset__refine-panel" role="region" aria-label="Refine">
           <textarea
@@ -1331,7 +1227,7 @@ function VisualAssetBody({ rfId, data }: { rfId: string; data: FlowboardNodeData
 }
 
 // Shared editable body for prompt + note nodes. Both store free-form text
-// in `data.prompt`; only display markup differs. Double-click swaps to a
+// in `data.generation?.prompt`; only display markup differs. Double-click swaps to a
 // textarea; blur or Cmd/Ctrl+Enter saves; Esc cancels.
 function EditableTextBody({
   rfId,
@@ -1343,12 +1239,12 @@ function EditableTextBody({
   variant: "prompt" | "note";
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(data.prompt ?? "");
+  const [draft, setDraft] = useState(data.generation?.prompt ?? "");
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (editing) {
-      setDraft(data.prompt ?? "");
+      setDraft(data.generation?.prompt ?? "");
       requestAnimationFrame(() => {
         const ta = taRef.current;
         if (ta) {
@@ -1361,13 +1257,8 @@ function EditableTextBody({
 
   function save() {
     const next = draft;
-    if (next !== (data.prompt ?? "")) {
-      useBoardStore.getState().updateNodeData(rfId, { prompt: next });
-      const dbId = parseInt(rfId, 10);
-      if (!isNaN(dbId)) {
-        // Backend merges `data`, so only the prompt delta needs shipping.
-        patchNode(dbId, { data: { prompt: next } }).catch(() => {});
-      }
+    if (next !== (data.generation?.prompt ?? "")) {
+      useBoardStore.getState().updateNodeGeneration(rfId, { prompt: next });
     }
     setEditing(false);
   }
@@ -1400,7 +1291,7 @@ function EditableTextBody({
     );
   }
 
-  const text = data.prompt ?? "";
+  const text = data.generation?.prompt ?? "";
   const placeholder =
     variant === "prompt"
       ? "Double-click to add direction…"
@@ -1434,7 +1325,7 @@ function StoryboardBody({ rfId, data }: { rfId: string; data: FlowboardNodeData 
   // Show the concrete rows × cols (post-orientation flip), not the
   // user-picker key. So a node with grid="2x3" on a portrait composite
   // shows "3×2" — matches what Flow actually rendered.
-  const g = normaliseStoryboardGrid(data.storyboardGrid);
+  const g = normaliseStoryboardGrid(data.generation?.storyboardGrid);
   const { rows, cols } = resolveStoryboardLayout(g, data.aspectRatio);
   const label = `${rows}×${cols}`;
   return (
@@ -1479,6 +1370,12 @@ export function NodeCard(props: NodeProps<FlowNode>) {
   const isNote = data.type === "note";
   const isGenerable = ["image", "prompt", "video", "visual_asset", "character", "Storyboard"].includes(data.type);
   const isRunning = data.status === "running";
+  const isGenerationActive = data.status === "queued" || isRunning;
+  const isCanceling = useGenerationStore((state) => !!state.canceling[props.id]);
+  const isResuming = useGenerationStore((state) => !!state.resuming[props.id]);
+  const canResumeChain = data.status === "error"
+    && typeof data.lastRequestId === "string"
+    && ["failed", "timeout", "canceled"].includes(String(data.lastRequestStatus));
   const llmBusy = isLLMBusy(data);
   const downloadable = !!data.mediaId && data.type !== "prompt" && data.type !== "note";
 
@@ -1488,7 +1385,17 @@ export function NodeCard(props: NodeProps<FlowNode>) {
   function handleGenerate(e: React.MouseEvent) {
     e.stopPropagation();
     if (llmBusy) return; // guard: backend still composing for this node
-    useGenerationStore.getState().openGenerationDialog(props.id, data.prompt ?? "");
+    useGenerationStore.getState().openGenerationDialog(props.id, data.generation?.prompt ?? "");
+  }
+
+  function handleCancelGeneration(e: React.MouseEvent) {
+    e.stopPropagation();
+    void useGenerationStore.getState().cancelCanvasGeneration(props.id);
+  }
+
+  function handleResumeChain(e: React.MouseEvent) {
+    e.stopPropagation();
+    void useGenerationStore.getState().resumeCanvasChain(props.id);
   }
 
   function handleDownload(e: React.MouseEvent) {
@@ -1536,18 +1443,18 @@ export function NodeCard(props: NodeProps<FlowNode>) {
         {videoInfo && (() => {
           let displayMode = videoInfo.mode;
           if (videoInfo.mode === "t2v") {
-            const independentMediaIds = data.independentMediaIds as string[] | undefined;
-            const independentVideoMode = data.independentVideoMode as string | undefined;
+            const independentMediaIds = data.generation?.independentVideoMediaIds as string[] | undefined;
+            const independentVideoMode = data.generation?.independentVideoMode as string | undefined;
             if (independentMediaIds && independentMediaIds.length > 1) {
               displayMode = "r2v";
             } else if (independentMediaIds && independentMediaIds.length === 1) {
               displayMode = (independentVideoMode as "i2v" | "r2v") || "i2v";
-            } else if (data.t2vSourceId) {
+            } else if (data.generation?.t2vSourceId) {
               displayMode = "i2v";
             }
           } else if (videoInfo.mode === "i2v" || videoInfo.mode === "video_continuation") {
-            const connectedVideoMode = data.connectedVideoMode as string | undefined;
-            const r2vAdditionalMediaIds = data.r2vAdditionalMediaIds as string[] | undefined;
+            const connectedVideoMode = data.generation?.connectedVideoMode as string | undefined;
+            const r2vAdditionalMediaIds = data.generation?.r2vAdditionalMediaIds as string[] | undefined;
             if ((r2vAdditionalMediaIds && r2vAdditionalMediaIds.length > 0) || connectedVideoMode === "r2v") {
               displayMode = "r2v";
             } else {
@@ -1593,6 +1500,30 @@ export function NodeCard(props: NodeProps<FlowNode>) {
               disabled={llmBusy}
             >
               ▶
+            </button>
+          )}
+          {isGenerable && isGenerationActive && (
+            <button
+              className="node-header__btn node-header__btn--cancel"
+              onClick={handleCancelGeneration}
+              aria-label="Cancel generation and stop downstream chain"
+              title={isCanceling ? "Đang hủy…" : "Hủy generation và dừng chuỗi phía sau"}
+              tabIndex={0}
+              disabled={isCanceling}
+            >
+              {isCanceling ? "…" : "■"}
+            </button>
+          )}
+          {isGenerable && canResumeChain && (
+            <button
+              className="node-header__btn node-header__btn--resume"
+              onClick={handleResumeChain}
+              aria-label="Resume generation chain from this node"
+              title={isResuming ? "Đang khởi động lại chuỗi…" : "Chạy lại chuỗi từ đây"}
+              tabIndex={0}
+              disabled={isResuming}
+            >
+              {isResuming ? "…" : "↻"}
             </button>
           )}
         </div>

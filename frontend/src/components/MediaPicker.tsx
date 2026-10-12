@@ -12,9 +12,10 @@ interface MediaPickerProps {
   kind?: 'image' | 'video' | 'both';
   disabled?: boolean;
   buttonText?: string;
+  workspaceId?: string | null;
 }
 
-export const MediaPicker: React.FC<MediaPickerProps> = ({ value, multi = false, onChange, kind = 'image', disabled = false, buttonText }) => {
+export const MediaPicker: React.FC<MediaPickerProps> = ({ value, multi = false, onChange, kind = 'image', disabled = false, buttonText, workspaceId }) => {
   const { openModal, closeModal } = useModal();
   const [mediaMap, setMediaMap] = useState<Record<string, MediaItem>>({});
 
@@ -22,7 +23,7 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({ value, multi = false, 
 
   useEffect(() => {
     let active = true;
-    allMedia().then((list) => {
+    allMedia(workspaceId).then((list) => {
       if (!active) return;
       const map: Record<string, MediaItem> = {};
       for (const m of list) map[m.id] = m;
@@ -31,7 +32,7 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({ value, multi = false, 
     return () => {
       active = false;
     };
-  }, [value]);
+  }, [value, workspaceId]);
 
   const emit = (newIds: string[]) => {
     const items = newIds.map(id => mediaMap[id]).filter(Boolean);
@@ -44,7 +45,7 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({ value, multi = false, 
   };
 
   const openPickerModal = async () => {
-    const list = (await allMedia()).filter((m) => kind === 'both' || m.kind === kind);
+    const list = (await allMedia(workspaceId)).filter((m) => kind === 'both' || m.kind === kind);
     let title = 'Chọn ảnh';
     if (kind === 'video') title = 'Chọn video';
     if (kind === 'both') title = 'Chọn ảnh / video';
@@ -56,6 +57,7 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({ value, multi = false, 
         initialSelected={ids}
         mediaList={list}
         multi={multi}
+        allowCustomId={workspaceId == null}
         onConfirm={(chosen) => {
           // fetch from updated list if missing in map
           const newMap = { ...mediaMap };
@@ -95,6 +97,7 @@ interface PickerModalContentProps {
   initialSelected: string[];
   mediaList: MediaItem[];
   multi: boolean;
+  allowCustomId: boolean;
   onConfirm: (selected: string[]) => void;
 }
 
@@ -102,6 +105,7 @@ const PickerModalContent: React.FC<PickerModalContentProps> = ({
   initialSelected,
   mediaList,
   multi,
+  allowCustomId,
   onConfirm,
 }) => {
   const [selected, setSelected] = useState<string[]>([...initialSelected]);
@@ -128,7 +132,7 @@ const PickerModalContent: React.FC<PickerModalContentProps> = ({
 
   return (
     <div>
-      <div className="inline" style={{ marginBottom: '10px' }}>
+      {allowCustomId && <div className="inline" style={{ marginBottom: '10px' }}>
         <input
           className="input mono"
           placeholder="…hoặc dán media ID"
@@ -142,7 +146,7 @@ const PickerModalContent: React.FC<PickerModalContentProps> = ({
         <button type="button" className="btn btn-sm" onClick={handleAddCustomId}>
           Thêm ID
         </button>
-      </div>
+      </div>}
 
       <div className="tiles">
         {mediaList.map((m) => {

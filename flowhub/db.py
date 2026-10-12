@@ -9,6 +9,7 @@ import json
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -20,7 +21,7 @@ CREATE TABLE IF NOT EXISTS workers (
 
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY, type TEXT, status TEXT, spec TEXT, model TEXT, prompt TEXT, worker_id TEXT,
-  error TEXT, warnings TEXT, ops TEXT, results TEXT, note TEXT,
+  error TEXT, warnings TEXT, ops TEXT, results TEXT, note TEXT, workspace_id TEXT,
   created_at REAL, updated_at REAL, finished_at REAL, poll_started_at REAL, timeout_s REAL);
 CREATE INDEX IF NOT EXISTS jobs_created ON jobs(created_at);
 
@@ -32,8 +33,9 @@ CREATE INDEX IF NOT EXISTS rpc_log_job ON rpc_log(job_id);
 CREATE TABLE IF NOT EXISTS media (
   id TEXT PRIMARY KEY, kind TEXT, url TEXT, poster_url TEXT, url_at REAL, local_path TEXT, mime TEXT,
   size INTEGER, prompt TEXT, model TEXT, source TEXT, job_id TEXT, project_id TEXT, aspect TEXT,
-  created_at REAL, note TEXT);
+  created_at REAL, note TEXT, workspace_id TEXT);
 CREATE INDEX IF NOT EXISTS media_created ON media(created_at);
+CREATE INDEX IF NOT EXISTS media_workspace ON media(workspace_id, created_at);
 
 CREATE TABLE IF NOT EXISTS observations (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, worker_id TEXT, tab_id INTEGER, kind TEXT, source TEXT,
@@ -60,12 +62,31 @@ CREATE TABLE IF NOT EXISTS alerts (
 CREATE TABLE IF NOT EXISTS templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, rpcid TEXT, captcha_action TEXT, inner TEXT,
   variables TEXT, result_kind TEXT, observation_id INTEGER, note TEXT, created_at REAL, updated_at REAL);
+
+CREATE TABLE IF NOT EXISTS canvas_boards (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, project_id TEXT NOT NULL DEFAULT 'default',
+  public_id TEXT, created_at REAL, viewport TEXT, worker_id TEXT);
+CREATE UNIQUE INDEX IF NOT EXISTS canvas_boards_public_id ON canvas_boards(public_id);
+CREATE TABLE IF NOT EXISTS canvas_nodes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, board_id INTEGER NOT NULL REFERENCES canvas_boards(id) ON DELETE CASCADE,
+  type TEXT NOT NULL, short_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'idle',
+  x REAL NOT NULL DEFAULT 0, y REAL NOT NULL DEFAULT 0, data TEXT NOT NULL DEFAULT '{}');
+CREATE INDEX IF NOT EXISTS canvas_nodes_board ON canvas_nodes(board_id);
+CREATE TABLE IF NOT EXISTS canvas_edges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, board_id INTEGER NOT NULL REFERENCES canvas_boards(id) ON DELETE CASCADE,
+  source_id INTEGER NOT NULL REFERENCES canvas_nodes(id) ON DELETE CASCADE,
+  target_id INTEGER NOT NULL REFERENCES canvas_nodes(id) ON DELETE CASCADE, source_variant_idx INTEGER);
+CREATE INDEX IF NOT EXISTS canvas_edges_board ON canvas_edges(board_id);
+CREATE TABLE IF NOT EXISTS canvas_requests (
+  id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, type TEXT NOT NULL, node_id TEXT,
+  params TEXT NOT NULL DEFAULT '{}', created_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS canvas_requests_node ON canvas_requests(node_id, created_at);
 """
 
 #: Columns stored as JSON text and decoded on the way out.
 JSON_COLUMNS = {"info", "spec", "warnings", "ops", "results", "params", "form_keys", "headers", "rpcs",
                 "summary", "response", "strings", "actions", "data", "inner", "variables", "check_result",
-                "rpcids"}
+                "rpcids", "viewport"}
 
 
 def _encode(key: str, value: Any) -> Any:
@@ -93,9 +114,26 @@ class DB:
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.executescript(SCHEMA)
+        board_columns = {row[1] for row in self._conn.execute("PRAGMA table_info(canvas_boards)")}
+        if "worker_id" not in board_columns:
+            self._conn.execute("ALTER TABLE canvas_boards ADD COLUMN worker_id TEXT")
+
+    @contextmanager
+    def transaction(self):
+        """Run a group of statements atomically on the shared connection."""
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+            except Exception:
+                self._conn.rollback()
+                raise
+            else:
+                self._conn.commit()
 
     def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
         with self._lock:

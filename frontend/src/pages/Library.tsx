@@ -7,6 +7,7 @@ import { MediaModalContent } from '../components/MediaModal';
 import { useModal } from '../context/ModalContext';
 import { useToast } from '../context/ToastContext';
 import { useFlowEvents } from '../api/events';
+import { useLocation } from 'react-router-dom';
 
 interface FilterOption {
   label: string;
@@ -28,6 +29,14 @@ export const LibraryPage: React.FC = () => {
   const [activeFilterIndex, setActiveFilterIndex] = useState<number>(0);
   const [idInput, setIdInput] = useState('');
   const [loading, setLoading] = useState(true);
+  const location = useLocation();
+  const workspaceId = (() => {
+    const fromUrl = new URLSearchParams(location.search).get('workspace_id');
+    if (fromUrl) return fromUrl;
+    try {
+      return localStorage.getItem('flowboard.activeProjectId');
+    } catch { return null; }
+  })();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { openModal } = useModal();
@@ -36,6 +45,7 @@ export const LibraryPage: React.FC = () => {
   const load = useCallback(async () => {
     const f = FILTERS[activeFilterIndex];
     const q = new URLSearchParams({ limit: '500' });
+    if (workspaceId !== null) q.set('workspace_id', String(workspaceId));
     if (f.kind) q.set('kind', f.kind);
     if (f.source) q.set('source', f.source);
 
@@ -47,7 +57,7 @@ export const LibraryPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [activeFilterIndex]);
+  }, [activeFilterIndex, workspaceId]);
 
   useEffect(() => {
     load();
@@ -70,6 +80,7 @@ export const LibraryPage: React.FC = () => {
     for (const f of files) {
       const form = new FormData();
       form.append('file', f);
+      if (workspaceId !== null) form.append('workspace_id', String(workspaceId));
       try {
         const job = await api<{ id: string }>('/api/uploads', { method: 'POST', form });
         toast(`Đang upload ${f.name} (job ${job.id})`, 'ok');
@@ -86,7 +97,7 @@ export const LibraryPage: React.FC = () => {
     const trimmed = idInput.trim();
     if (!trimmed) return;
     try {
-      await api('/api/media', { method: 'POST', body: { media_id: trimmed } });
+      await api('/api/media', { method: 'POST', body: { media_id: trimmed, workspace_id: workspaceId } });
       setIdInput('');
       toast('Đã thêm', 'ok');
       load();
@@ -98,9 +109,10 @@ export const LibraryPage: React.FC = () => {
   const handleClearAll = async () => {
     if (!window.confirm('Xóa tất cả media trong thư viện?')) return;
     try {
-      await api('/api/media', { method: 'DELETE' });
+      const scope = workspaceId === null ? '' : `?workspace_id=${workspaceId}`;
+      await api(`/api/media${scope}`, { method: 'DELETE' });
       invalidateMedia();
-      toast('Đã xóa toàn bộ thư viện', 'ok');
+      toast('Đã xóa media trong project', 'ok');
       load();
     } catch (e: any) {
       toast(e.message, 'err');
@@ -113,8 +125,8 @@ export const LibraryPage: React.FC = () => {
         <div>
           <h1>Thư viện</h1>
           <p>
-            Mọi ảnh / video đã tạo, upload hoặc thêm bằng ID. Bấm vào để xem, tải, upscale hoặc dùng
-            làm tham chiếu.
+            {workspaceId === null ? 'Mọi ảnh / video chưa gắn với một canvas project.' : 'Ảnh và video trong project hiện tại. Bấm vào để xem, tải, upscale hoặc dùng'}
+            {workspaceId !== null && ' làm tham chiếu.'}
           </p>
         </div>
         <button type="button" className="btn btn-sm btn-danger" onClick={handleClearAll}>

@@ -47,6 +47,12 @@ Mở dashboard: <http://127.0.0.1:8787> · tài liệu API: <http://127.0.0.1:87
 
 Mỗi profile Chrome (một tài khoản Google) là một worker; có thể nối nhiều worker vào cùng server.
 
+## Docker data location
+
+`docker compose up -d --build` stores SQLite and downloaded media in the host folder
+configured by `FLOWHUB_DATA_DIR` (default: `./data`), bind-mounted at `/app/data`
+inside the container. Set this variable in `.env` to choose another host path.
+
 ## Dashboard
 
 | Trang | Chức năng |

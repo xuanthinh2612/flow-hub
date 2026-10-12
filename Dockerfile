@@ -9,6 +9,9 @@ RUN npm run build
 # Stage 2: Python Backend Runtime
 FROM python:3.12-slim
 
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 

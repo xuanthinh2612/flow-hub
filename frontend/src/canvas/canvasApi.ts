@@ -1,5 +1,5 @@
 import { api, mediaFile, withKey } from "../api/client";
-import type { JobItem } from "../api/types";
+import type { JobItem, MediaItem } from "../api/types";
 
 export const mediaUrl = (id: string) => {
   if (!id) return '';
@@ -8,19 +8,20 @@ export const mediaUrl = (id: string) => {
 };
 
 export async function patchEdge(id: number, data: any) {
-  return data;
+  return api(`/api/edges/${id}`, { method: "PATCH", body: data });
 }
 
-import { patchNode as storePatchNode } from "../store/dummyBoardApi";
+import { patchNode as storePatchNode } from "../store/boardApi";
 
 export async function patchNode(id: number, data: any) {
   return storePatchNode(id, data);
 }
 
-export async function uploadImage(file: File, projectId?: string, dbId?: number) {
+export async function uploadImage(file: File, projectId?: string, dbId?: number, workspaceId?: string) {
   const form = new FormData();
   form.append("file", file);
-  if (projectId) form.append("project_id", projectId);
+  if (projectId && projectId !== "default") form.append("project_id", projectId);
+  if (workspaceId) form.append("workspace_id", workspaceId);
   const resp = await api<{ id: string; media_id?: string; aspect_ratio?: string }>("/api/uploads", {
     method: "POST",
     form,
@@ -54,16 +55,17 @@ export async function uploadImage(file: File, projectId?: string, dbId?: number)
   return { media_id: resp.id, aspect_ratio: "16:9" };
 }
 
-export async function uploadImageFromUrl(url: string, projectId?: string, dbId?: number) {
-  return { media_id: "mock", aspect_ratio: "16:9" };
+export async function uploadImageFromUrl(_url: string, _projectId?: string, _dbId?: number): Promise<{ media_id: string; aspect_ratio?: string }> {
+  throw new Error("Upload from URL is not supported. Download the image and upload the file instead.");
 }
 
-export function requestAutoBrief(rfId: string, mediaId: string) {
-  // no-op
+export async function autoPrompt(_rfId: number, _options?: { camera?: string }): Promise<{ prompt: string }> {
+  throw new Error("Automatic prompt generation is not available in this backend.");
 }
 
-export async function autoPrompt(...args: any[]): Promise<any> { return { prompt: "auto" }; }
-export async function autoPromptBatch(...args: any[]): Promise<any> { return { prompts: ["auto", "auto", "auto", "auto"] }; }
+export async function autoPromptBatch(_rfId: number, _count: number): Promise<{ prompts: string[] }> {
+  throw new Error("Automatic prompt generation is not available in this backend.");
+}
 
 export interface MediaStatus {
   available: boolean;
@@ -72,6 +74,10 @@ export interface MediaStatus {
   reason?: string;
 }
 
-export async function getMediaStatus(_mediaId: string): Promise<MediaStatus> {
-  return { available: true, has_url: true };
+export async function getMediaStatus(mediaId: string): Promise<MediaStatus> {
+  const item = await api<MediaItem>(`/api/media/${encodeURIComponent(mediaId)}`);
+  return {
+    available: Boolean(item.local_path || item.url),
+    has_url: Boolean(item.url),
+  };
 }

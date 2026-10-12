@@ -98,11 +98,17 @@ class JobEngine:
 
     # ── lifecycle ──
     async def startup(self) -> None:
-        for row in self.db.all("SELECT id, status FROM jobs WHERE status IN ('queued','running','polling')"):
+        for row in self.db.all("SELECT id, status, type, spec FROM jobs WHERE status IN ('queued','running','polling')"):
             if row["status"] == "running":
-                self.db.update("jobs", "id", row["id"], {
-                    "status": "failed", "error": "bị gián đoạn: server khởi động lại giữa lúc gửi",
-                    "updated_at": now(), "finished_at": now()})
+                spec = row.get("spec") or {}
+                if spec.get("stage") == "extracting_frames":
+                    self.db.update("jobs", "id", row["id"], {
+                        "status": "queued", "error": None, "updated_at": now(), "finished_at": None})
+                    self._spawn(row["id"], self._run)
+                else:
+                    self.db.update("jobs", "id", row["id"], {
+                        "status": "failed", "error": "bị gián đoạn: server khởi động lại giữa lúc gửi",
+                        "updated_at": now(), "finished_at": now()})
             elif row["status"] == "queued":
                 self._spawn(row["id"], self._run)
             else:
@@ -154,20 +160,39 @@ class JobEngine:
             s["model"] = row["key"]
             s["family"] = row["family"]
             s["model_status"] = row["status"]
+        elif kind == "r2v" and s.get("model") in {
+                "veo_3_1_r2v_fast", "veo_3_1_r2v_fast_portrait", "veo_3_1_r2v_fast_landscape"}:
+            # Fast uses distinct Flow keys for portrait and landscape.
+            # Resolve stale/mismatched picker values against the selected aspect.
+            row = self.catalog.resolve("r2v", "veo_3_1_fast", s.get("aspect_label"))
+            s["model"] = row["key"]
+            s["family"] = row["family"]
+            s["model_status"] = row["status"]
 
         refs = [m for m in s.get("ref_media_ids") or [] if m]
         s["ref_media_ids"] = refs
+        if s.get("ref_media_names") is not None:
+            names = [str(name) for name in s["ref_media_names"]]
+            if len(names) != len(refs):
+                raise ValueError("ref_media_names cần một tên cho mỗi ref_media_id")
+            s["ref_media_names"] = names
         if kind == "edit" and not s.get("base_media_id"):
             raise ValueError("sửa ảnh cần base_media_id")
         if kind == "i2v":
             starts = [m for m in (s.get("start_media_ids") or []) if m] or ([s["start_media_id"]] if s.get("start_media_id") else [])
-            if not starts:
+            if not starts and not s.get("extract_start_video_id") and not s.get("canvas_dependencies"):
                 raise ValueError("i2v cần start_media_ids")
             s["start_media_ids"] = starts
+        if s.get("extract_start_video_id"):
+            s["extract_start_video_id"] = str(s["extract_start_video_id"])
         if kind == "first_last" and not (s.get("start_media_id") and s.get("end_media_id")):
             raise ValueError("first_last cần start_media_id và end_media_id")
-        if kind == "r2v" and not refs:
+        s["extract_video_ids"] = [str(m) for m in (s.get("extract_video_ids") or []) if m]
+        if kind == "r2v" and not refs and not s["extract_video_ids"] and not s.get("canvas_dependencies"):
             raise ValueError("r2v cần ít nhất 1 ref_media_ids")
+        if s["extract_video_ids"] or s.get("extract_start_video_id"):
+            s["stage"] = "extracting_frames"
+            s["extracted_video_frames"] = {}
         if kind == "upscale":
             if not s.get("media_id"):
                 raise ValueError("upscale cần media_id")
@@ -218,10 +243,22 @@ class JobEngine:
                                       self._crop(s["start_media_id"], s["aspect_code"]),
                                       self._crop(s["end_media_id"], s["aspect_code"]))))
         elif kind == "r2v":
+            # The current Flow MZZa6b shape embeds reference labels in the
+            # prompt block for Veo 3.1 Fast and Lite. Omni keeps its verified
+            # prompt-only shape.
+            is_veo_r2v = str(model or "").startswith("veo_3_1_r2v_")
+            names = s.get("ref_media_names") if is_veo_r2v else None
+            if is_veo_r2v and names is None:
+                names = []
+                for media_id in s["ref_media_ids"]:
+                    media = self.media.get(str(media_id)) or {}
+                    # Uploads through Flow Hub keep the original filename in
+                    # `prompt`; generated/imported media may not have a label.
+                    names.append(str(media.get("file_name") or media.get("prompt") or media_id))
             for n in range(s["count"]):
                 calls.append(Call(f"ingredients #{n + 1}", fb.RPC_GEN_VIDEO_REFERENCES, captcha=cap(fb.RPC_GEN_VIDEO_REFERENCES),
                                   build=lambda: fb.reference_video_request(prompt, project_id, s["ref_media_ids"],
-                                                                           s["aspect_code"], model)))
+                                                                           s["aspect_code"], model, names)))
         elif kind == "upscale":
             calls.append(Call(s["resolution"], fb.RPC_UPSCALE_IMAGE, captcha=cap(fb.RPC_UPSCALE_IMAGE),
                               build=lambda: fb.upscale_request(s["media_id"], s["resolution"])))
@@ -268,7 +305,7 @@ class JobEngine:
         self.db.insert("jobs", {"id": job_id, "type": s["type"], "status": "queued", "spec": s,
                                 "model": s.get("model"), "prompt": s.get("prompt") or s.get("file_name"),
                                 "warnings": [], "ops": [], "results": [], "created_at": t, "updated_at": t,
-                                "timeout_s": s["timeout_s"]})
+                                "timeout_s": s["timeout_s"], "workspace_id": s.get("workspace_id")})
         if secret:
             self._secrets[job_id] = secret
         self._spawn(job_id, self._run)
@@ -423,7 +460,16 @@ class JobEngine:
             raise
 
     def _project_for(self, job: dict, worker: "Worker") -> str:
-        pid = job["spec"].get("project_id") or self.settings.get("project_id") or (worker.projects or [None])[0]
+        pid = job["spec"].get("project_id")
+        if pid in ("", "default"):
+            pid = None
+        if not pid and job["spec"].get("worker_id"):
+            pid = (worker.projects or [None])[0]
+        if not pid:
+            configured_project = self.settings.get("project_id")
+            if configured_project in ("", "default"):
+                configured_project = None
+            pid = configured_project or (worker.projects or [None])[0]
         if not pid:
             raise fb.FlowError("chưa có Flow project id: mở một project trên flow.google.com hoặc đặt trong Cài đặt")
         return pid
@@ -434,9 +480,17 @@ class JobEngine:
         if job is None or job["status"] != "queued":
             return
         try:
+            if job["spec"].get("canvas_dependencies"):
+                await self._wait_canvas_dependencies(job)
+                job = self.get(job_id)
+                if job is None or job["status"] not in ACTIVE:
+                    return
             worker = self.hub.pick(job["spec"].get("worker_id"),
                                    job["spec"].get("project_id") or self.settings.get("project_id"))
             if worker is None:
+                assigned_worker_id = job["spec"].get("worker_id")
+                if assigned_worker_id:
+                    return self._fail(job, f"Extension {assigned_worker_id[:8]} đang offline; project chỉ chạy qua extension đã liên kết.")
                 job["note"] = "Chờ extension (worker) kết nối…"
                 self._save(job, "note")
                 worker = await self.hub.wait_for(job["spec"].get("worker_id"), float(self.settings.get("wait_worker_s") or 120))
@@ -445,6 +499,11 @@ class JobEngine:
             job.update(status="running", worker_id=worker.id, note=None)
             self._save(job)
             project_id = self._project_for(job, worker)
+            if job["spec"].get("extract_video_ids") or job["spec"].get("extract_start_video_id"):
+                await self._prepare_video_frames(job, worker, project_id)
+                job = self.get(job_id)
+                if job is None or job["status"] not in ACTIVE:
+                    return
             calls = self.plan(job, project_id)
             kind = job["type"]
             if kind in IMAGE_TYPES:
@@ -464,6 +523,167 @@ class JobEngine:
             current = self.get(job_id)
             if current and current["status"] in ACTIVE:
                 self._fail(job, str(exc))
+
+    async def _wait_canvas_dependencies(self, job: dict) -> None:
+        """Wait for upstream Canvas jobs, then attach their media to this spec."""
+        spec = job["spec"]
+        dependencies = spec.get("canvas_dependencies") or []
+        started = asyncio.get_running_loop().time()
+        # Waiting for a chain must not consume the generation's own timeout.
+        timeout = max(float(spec.get("timeout_s") or 600), 24 * 60 * 60)
+        resolved: list[tuple[dict, str]] = []
+        while len(resolved) < len(dependencies):
+            current = self.get(job["id"])
+            if current is None or current["status"] not in ACTIVE:
+                return
+            for dep in dependencies[len(resolved):]:
+                request_id = dep.get("request_id")
+                if not request_id:
+                    latest = self.db.one(
+                        "SELECT id FROM canvas_requests WHERE node_id=? AND created_at>? ORDER BY created_at DESC LIMIT 1",
+                        (str(dep["source_node_id"]), float(dep.get("after_created_at") or 0)),
+                    )
+                    if latest:
+                        request_id = latest["id"]
+                        dep["request_id"] = request_id
+                        self.db.update("jobs", "id", job["id"], {"spec": spec})
+                    else:
+                        source_node = self.db.one("SELECT status FROM canvas_nodes WHERE id=?", (dep["source_node_id"],))
+                        if not source_node or source_node["status"] not in {"idle", "queued", "running"}:
+                            raise fb.FlowError(f"node nguồn #{dep.get('source_node_id')} không tạo được request")
+                        break
+                request = self.db.one("SELECT job_id FROM canvas_requests WHERE id=?", (request_id,))
+                if not request:
+                    raise fb.FlowError(f"node nguồn #{dep.get('source_node_id')} không còn request để chờ")
+                upstream = self.get(request["job_id"])
+                if not upstream:
+                    raise fb.FlowError(f"node nguồn #{dep.get('source_node_id')} mất job")
+                if upstream["status"] in ACTIVE:
+                    break
+                if upstream["status"] != "done":
+                    detail = upstream.get("error") or upstream["status"]
+                    raise fb.FlowError(f"dừng chuỗi: node nguồn #{dep.get('source_node_id')} thất bại ({detail})")
+                outputs = upstream.get("results") or []
+                idx = dep.get("source_variant_idx")
+                output = outputs[idx] if isinstance(idx, int) and 0 <= idx < len(outputs) else (outputs[0] if outputs else None)
+                media_id = (output or {}).get("media_id")
+                if not media_id:
+                    raise fb.FlowError(f"node nguồn #{dep.get('source_node_id')} hoàn tất nhưng không có media")
+                resolved.append((dep, str(media_id)))
+            else:
+                break
+            if asyncio.get_running_loop().time() - started > timeout:
+                raise fb.FlowError("hết thời gian chờ node nguồn hoàn tất")
+            job["note"] = "Đang chờ node nguồn hoàn tất…"
+            self._save(job, "note")
+            await asyncio.sleep(1.5)
+
+        for dep, media_id in resolved:
+            is_video = dep.get("source_type") == "video"
+            kind = spec.get("type")
+            if kind in IMAGE_TYPES:
+                key = "extract_video_ids" if is_video else "ref_media_ids"
+            elif kind == "i2v":
+                key = "extract_video_ids" if is_video else "start_media_ids"
+            elif kind == "r2v":
+                key = "extract_video_ids" if is_video else "ref_media_ids"
+            else:
+                continue
+            old_ids = set(dep.get("previous_media_ids") or [])
+            if old_ids:
+                spec[key] = [value for value in (spec.get(key) or []) if value not in old_ids]
+                if is_video and spec.get("extract_start_video_id") in old_ids:
+                    spec.pop("extract_start_video_id", None)
+                if not is_video and spec.get("start_media_id") in old_ids:
+                    spec.pop("start_media_id", None)
+            spec[key] = list(dict.fromkeys([*(spec.get(key) or []), media_id]))
+        spec.pop("canvas_dependencies", None)
+        self.db.update("jobs", "id", job["id"], {"spec": spec})
+        job["spec"] = spec
+        if spec.get("extract_video_ids"):
+            spec["stage"] = "extracting_frames"
+            spec["extracted_video_frames"] = {}
+            self.db.update("jobs", "id", job["id"], {"spec": spec})
+
+    async def _prepare_video_frames(self, job: dict, worker: "Worker", project_id: str) -> None:
+        """Extract and upload source-video frames server-side, checkpointing each one."""
+        spec = job["spec"]
+        spec["stage"] = "extracting_frames"
+        spec.setdefault("extracted_video_frames", {})
+        self.db.update("jobs", "id", job["id"], {"spec": spec})
+        video_ids = list(dict.fromkeys(spec.get("extract_video_ids") or []))
+        if spec.get("extract_start_video_id"):
+            video_ids.append(spec["extract_start_video_id"])
+        video_ids = list(dict.fromkeys(video_ids))
+        workspace_id = job.get("workspace_id") or spec.get("workspace_id")
+
+        for video_id in video_ids:
+            if spec["extracted_video_frames"].get(video_id):
+                continue
+            source = self.media.get(video_id)
+            if not source or source.get("kind") != "video":
+                raise fb.FlowError(f"media nguồn {video_id} không phải video")
+            if workspace_id and source.get("workspace_id") != workspace_id:
+                raise fb.FlowError(f"video nguồn {video_id} không thuộc Canvas project hiện tại")
+            path = self.media.local_file(video_id) or await self.media.download(video_id, worker.id)
+            if not path:
+                raise fb.FlowError(f"không tải được video nguồn {video_id} về backend để trích frame")
+            image_bytes = await self._extract_last_frame(path)
+            image_id = await self._upload_frame(job, worker, project_id, video_id, image_bytes)
+            spec["extracted_video_frames"][video_id] = image_id
+            self.db.update("jobs", "id", job["id"], {"spec": spec})
+            job["spec"] = spec
+
+        frame_ids = [spec["extracted_video_frames"][video_id] for video_id in video_ids]
+        if spec.get("type") == "r2v":
+            spec["ref_media_ids"] = list(spec.get("ref_media_ids") or []) + frame_ids
+            if spec.get("ref_media_names") is not None:
+                spec["ref_media_names"] = list(spec["ref_media_names"]) + [
+                    f"last_frame_{video_id[:12]}.jpg" for video_id in video_ids
+                ]
+        elif spec.get("type") in IMAGE_TYPES:
+            spec["ref_media_ids"] = list(spec.get("ref_media_ids") or []) + frame_ids
+        elif spec.get("type") == "i2v":
+            spec["start_media_ids"] = list(spec.get("start_media_ids") or []) + frame_ids
+        spec.pop("extract_video_ids", None)
+        spec.pop("extract_start_video_id", None)
+        spec.pop("extracted_video_frames", None)
+        spec.pop("stage", None)
+        self.db.update("jobs", "id", job["id"], {"spec": spec})
+        job["spec"] = spec
+
+    async def _extract_last_frame(self, path) -> bytes:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-sseof", "-5",
+                "-i", str(path), "-vf", "reverse", "-frames:v", "1", "-f", "image2pipe",
+                "-an", "-vcodec", "mjpeg", "pipe:1", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+        except FileNotFoundError as exc:
+            raise fb.FlowError("backend chưa cài ffmpeg để trích frame video") from exc
+        except asyncio.TimeoutError as exc:
+            raise fb.FlowError("trích frame video vượt quá 120 giây") from exc
+        if process.returncode != 0 or not stdout:
+            detail = stderr.decode("utf-8", errors="replace")[-500:]
+            raise fb.FlowError(f"ffmpeg không trích được frame cuối: {detail}")
+        return stdout
+
+    async def _upload_frame(self, job: dict, worker: "Worker", project_id: str, source_video_id: str, data: bytes) -> str:
+        file_name = f"last_frame_{source_video_id[:12]}.jpg"
+        encoded = base64.b64encode(data).decode("ascii")
+        call = fb.upload_request(encoded, project_id, "image/jpeg", file_name)
+        uploaded_id = fb.read_uploaded_media_id(await self._call(
+            job, worker, fb.RPC_UPLOAD_IMAGE, call, self.observations.captcha_action_for(fb.RPC_UPLOAD_IMAGE),
+            body_preview=call.replace(encoded, f"<base64: {len(encoded)} ký tự>"), timeout=180,
+        ))
+        urls = await self._media_urls(job, worker, uploaded_id)
+        workspace_id = job.get("workspace_id") or job["spec"].get("workspace_id")
+        self.media.upsert({"id": uploaded_id, "kind": "image", "url": urls[1] if urls else None,
+                           "prompt": file_name, "source": "video_frame", "job_id": job["id"],
+                           "workspace_id": workspace_id})
+        self.media.save_bytes(uploaded_id, data, "image/jpeg")
+        return uploaded_id
 
     async def _run_images(self, job: dict, worker: "Worker", calls: list[Call], project_id: str) -> None:
         gap = float(self.settings.get("min_submit_gap_s") or 0)
@@ -486,7 +706,8 @@ class JobEngine:
                 job["results"].append({"kind": "image", "media_id": media_id, "url": url})
                 self.media.upsert({"id": media_id, "kind": "image", "url": url,
                                    "prompt": texts[i] if i < len(texts) else call.text, "model": s.get("model"),
-                                   "source": job["type"], "job_id": job["id"], "aspect": s.get("aspect")})
+                                   "source": job["type"], "job_id": job["id"], "aspect": s.get("aspect"),
+                                   "workspace_id": job.get("workspace_id", s.get("workspace_id"))})
                 self._download(media_id)
         self._finish(job, len(job["results"]), expected, first_error)
 
@@ -527,7 +748,8 @@ class JobEngine:
         found: dict[str, str] = {}
         while now() < deadline and len(found) < expected:
             await asyncio.sleep(every)
-            worker = self.hub.pick(job.get("worker_id")) or self.hub.pick()
+            assigned_worker_id = job.get("worker_id") or job["spec"].get("worker_id")
+            worker = self.hub.pick(assigned_worker_id) if assigned_worker_id else self.hub.pick()
             if worker is None:
                 continue
             try:
@@ -586,7 +808,8 @@ class JobEngine:
                     asyncio.create_task(self._webhook(job_id))
                     return
                 await asyncio.sleep(interval)
-                worker = self.hub.pick(job.get("worker_id")) or self.hub.pick()
+                assigned_worker_id = job.get("worker_id") or job["spec"].get("worker_id")
+                worker = self.hub.pick(assigned_worker_id) if assigned_worker_id else self.hub.pick()
                 if worker is None:
                     job["note"] = "Mất kết nối worker — chờ kết nối lại để poll tiếp"
                     self._save(job, "note")
@@ -662,7 +885,8 @@ class JobEngine:
         job["results"].append({"kind": "video", "media_id": media_id, "url": video, "poster_url": poster})
         s = job["spec"]
         self.media.upsert({"id": media_id, "kind": "video", "url": video, "poster_url": poster, "prompt": s.get("prompt"),
-                           "model": s.get("model"), "source": job["type"], "job_id": job["id"], "aspect": s.get("aspect")})
+                           "model": s.get("model"), "source": job["type"], "job_id": job["id"], "aspect": s.get("aspect"),
+                           "workspace_id": job.get("workspace_id", s.get("workspace_id"))})
         self._download(media_id)
 
     async def _run_upload(self, job: dict, worker: "Worker", call: Call) -> None:
@@ -679,7 +903,8 @@ class JobEngine:
         s = job["spec"]
         data = base64.b64decode(b64)
         self.media.upsert({"id": media_id, "kind": "image", "url": url, "prompt": s.get("file_name"), "source": "upload",
-                           "job_id": job["id"], "aspect": image_aspect(data)})
+                           "job_id": job["id"], "aspect": image_aspect(data),
+                           "workspace_id": job.get("workspace_id", s.get("workspace_id"))})
         self.media.save_bytes(media_id, data, s.get("mime_type"))
         job["results"].append({"kind": "image", "media_id": media_id, "url": url})
         self._finish(job, 1, 1, None)
@@ -690,7 +915,8 @@ class JobEngine:
         new_id = f"upscale-{s['resolution'].lower()}-{s['media_id']}"
         source = self.media.get(s["media_id"]) or {}
         self.media.upsert({"id": new_id, "kind": "image", "prompt": source.get("prompt"), "source": "upscale",
-                           "job_id": job["id"], "note": f"Upscale {s['resolution']} của {s['media_id']}"})
+                           "job_id": job["id"], "note": f"Upscale {s['resolution']} của {s['media_id']}",
+                           "workspace_id": s.get("workspace_id", source.get("workspace_id"))})
         self.media.save_bytes(new_id, base64.b64decode(encoded))
         job["results"].append({"kind": "image", "media_id": new_id, "local": True})
         self._finish(job, 1, 1, None)
@@ -735,9 +961,11 @@ class JobEngine:
             out["decoded"] = ob.decode_response(result["text"])
         return out
 
-    async def refresh_media(self, media_id: str) -> dict:
-        worker = self.hub.pick()
+    async def refresh_media(self, media_id: str, worker_id: Optional[str] = None) -> dict:
+        worker = self.hub.pick(worker_id) if worker_id else self.hub.pick()
         if worker is None:
+            if worker_id:
+                raise fb.FlowError(f"extension {worker_id[:8]} offline")
             raise fb.FlowError("không có worker nào kết nối")
         payload = await self._call(None, worker, fb.RPC_MEDIA, fb.media_request(media_id), None, log_call=False, timeout=60)
         video, image = fb.read_media_urls(payload)

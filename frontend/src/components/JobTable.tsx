@@ -1,7 +1,6 @@
 import React from 'react';
 import { JobItem } from '../api/types';
 import { ago, typeLabel, STATUS_LABEL } from '../utils/format';
-import { mediaFile } from '../api/client';
 import { useModal } from '../context/ModalContext';
 import { JobModalContent } from './JobModal';
 import { MediaVisual } from './MediaVisual';

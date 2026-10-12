@@ -34,7 +34,7 @@ export const mediaFile = (id: string): string => withKey(`/api/media/${encodeURI
 
 export async function api<T = any>(
   path: string,
-  { method = 'GET', body, form }: { method?: string; body?: any; form?: FormData } = {}
+  { method = 'GET', body, form, keepalive = false }: { method?: string; body?: any; form?: FormData; keepalive?: boolean } = {}
 ): Promise<T> {
   const headers: Record<string, string> = {};
   if (apiKey) headers['X-API-Key'] = apiKey;
@@ -47,7 +47,7 @@ export async function api<T = any>(
     payload = JSON.stringify(body);
   }
 
-  const resp = await fetch(path, { method, headers, body: payload });
+  const resp = await fetch(path, { method, headers, body: payload, keepalive });
   if (resp.status === 401) {
     if (onAuthRequiredCallback) onAuthRequiredCallback();
     throw new Error('Cần API key');
@@ -66,16 +66,24 @@ export async function api<T = any>(
 }
 
 // Media cache
-let mediaCache: Promise<MediaItem[]> | null = null;
+const mediaCache = new Map<string, Promise<MediaItem[]>>();
 
 export function invalidateMedia(): void {
-  mediaCache = null;
+  mediaCache.clear();
 }
 
-export async function allMedia(): Promise<MediaItem[]> {
-  if (!mediaCache) {
-    mediaCache = api<MediaItem[]>('/api/media?limit=1000').catch(() => []);
+export async function allMedia(workspaceId?: string | null): Promise<MediaItem[]> {
+  const key = workspaceId == null ? 'all' : String(workspaceId);
+  let cached = mediaCache.get(key);
+  if (!cached) {
+    const query = workspaceId == null ? '' : `&workspace_id=${workspaceId}`;
+    cached = api<MediaItem[]>(`/api/media?limit=1000${query}`).catch(() => []);
+    mediaCache.set(key, cached);
   }
-  return mediaCache;
+  return cached;
+}
+
+export function getMediaItem(mediaId: string): Promise<MediaItem> {
+  return api<MediaItem>(`/api/media/${encodeURIComponent(mediaId)}`);
 }
 

@@ -356,7 +356,18 @@ def rebuild(rpcid: str, inner: Any) -> Optional[str]:
     item = _video_item(inner)
     if item is None:
         return None
-    prompt = item[0][2][0][0][0]
+    prompt_block = item[0][2]
+    parts = prompt_block[0] if isinstance(prompt_block, list) and prompt_block else []
+    prompt_parts = [part[0] for part in parts
+                    if isinstance(part, list) and len(part) == 1
+                    and isinstance(part[0], str) and part[0].strip()]
+    if prompt_parts:
+        # Landscape puts the prompt last; portrait puts it first. Ignore
+        # whitespace-only ingredient separators.
+        prompt = prompt_parts[0] if item[3] == fb.VIDEO_PORTRAIT else prompt_parts[-1]
+    else:
+        # Legacy video shape: [[[prompt]]].
+        prompt = prompt_block[0][0][0]
     if rpcid == fb.RPC_GEN_VIDEO_TEXT:
         return fb.text_video_request(prompt, project, item[2], item[1])
     if rpcid == fb.RPC_GEN_VIDEO:
@@ -368,7 +379,24 @@ def rebuild(rpcid: str, inner: Any) -> Optional[str]:
         return fb.first_last_request(prompt, project, item[4][1], item[5][1], item[2], item[1],
                                      start_crop=item[4][5], end_crop=item[5][5])
     if rpcid == fb.RPC_GEN_VIDEO_REFERENCES:
-        return fb.reference_video_request(prompt, project, [r[1] for r in item[1]], item[3], item[2])
+        refs = [r[1] for r in item[1]]
+        # New Flow builds include [media_id, display_name] entries beside the
+        # prompt. Preserve them when rebuilding so Observation compares the
+        # current wire shape, while older captures still use the legacy shape.
+        names = None
+        try:
+            parts = item[0][2][0]
+            embedded = {}
+            for part in parts[:-1]:
+                if (isinstance(part, list) and len(part) > 1 and part[0] is None
+                        and isinstance(part[1], list) and part[1]
+                        and isinstance(part[1][0], list) and len(part[1][0]) > 1):
+                    embedded[str(part[1][0][0])] = str(part[1][0][1])
+            if all(str(ref) in embedded for ref in refs):
+                names = [embedded[str(ref)] for ref in refs]
+        except (TypeError, IndexError, KeyError):
+            pass
+        return fb.reference_video_request(prompt, project, refs, item[3], item[2], names)
     return None
 
 

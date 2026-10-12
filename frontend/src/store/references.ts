@@ -6,7 +6,7 @@ import {
   patchReference,
   type ReferenceCreateInput,
   type ReferenceItem,
-} from "./dummyBoardApi";
+} from "./boardApi";
 
 /**
  * User-curated cross-board reference library.
@@ -101,13 +101,19 @@ export const useReferencesStore = create<ReferencesState>((set, get) => ({
     // POST is idempotent on media_id server-side: if the user re-saves
     // the same variant, the backend returns the existing row. We then
     // upsert into local state — replace if present, prepend otherwise.
-    const row = await createReference(input);
-    const existing = get().items.find((r) => r.id === row.id);
-    const next = existing
-      ? get().items.map((r) => (r.id === row.id ? row : r))
-      : [row, ...get().items];
-    set({ items: sortReferences(next) });
-    return row;
+    set({ error: null });
+    try {
+      const row = await createReference(input);
+      const existing = get().items.find((r) => r.id === row.id);
+      const next = existing
+        ? get().items.map((r) => (r.id === row.id ? row : r))
+        : [row, ...get().items];
+      set({ items: sortReferences(next) });
+      return row;
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
+      throw err;
+    }
   },
 
   async remove(id) {

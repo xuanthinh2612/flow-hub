@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { api, withKey } from '../api/client';
 import { ObservationItem, RpcItem, TemplateItem } from '../api/types';
-import { clock, fmt, ago } from '../utils/format';
+import { clock, fmt } from '../utils/format';
 import { loadPref, savePref } from '../utils/storage';
 import { useToast } from '../context/ToastContext';
 import { useNavigate } from 'react-router-dom';

@@ -88,7 +88,7 @@ class MediaStore:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.events = events
         self.hub = hub
-        self._downloading: set[str] = set()
+        self._downloads: dict[str, tuple[asyncio.Task, Optional[str]]] = {}
 
     def upsert(self, item: dict) -> dict:
         existing = self.get(item["id"])
@@ -108,8 +108,11 @@ class MediaStore:
         return self.db.one("SELECT * FROM media WHERE id=?", (media_id,))
 
     def list(self, kind: Optional[str] = None, source: Optional[str] = None, limit: int = 200,
-             offset: int = 0) -> list[dict]:
+             offset: int = 0, workspace_id: Optional[str] = None) -> list[dict]:
         where, args = [], []
+        if workspace_id is not None:
+            where.append("workspace_id=?")
+            args.append(workspace_id)
         if kind:
             where.append("kind=?")
             args.append(kind)
@@ -139,6 +142,16 @@ class MediaStore:
         self.db.execute("DELETE FROM media")
         self.events.publish("media", {"deleted_all": True})
 
+    def delete_workspace(self, workspace_id: str) -> None:
+        rows = self.db.all("SELECT local_path FROM media WHERE workspace_id=? AND local_path IS NOT NULL", (workspace_id,))
+        for row in rows:
+            try:
+                Path(row["local_path"]).unlink(missing_ok=True)
+            except OSError:
+                pass
+        self.db.execute("DELETE FROM media WHERE workspace_id=?", (workspace_id,))
+        self.events.publish("media", {"workspace_id": workspace_id, "deleted_all": True})
+
     def local_file(self, media_id: str) -> Optional[Path]:
         row = self.get(media_id)
         if row and row.get("local_path") and Path(row["local_path"]).is_file():
@@ -158,32 +171,63 @@ class MediaStore:
         self.events.publish("media", {"id": media_id, "local": True})
         return path
 
-    async def download(self, media_id: str) -> Optional[Path]:
+    async def download(self, media_id: str, worker_id: Optional[str] = None) -> Optional[Path]:
         """Keep a local copy. Best effort: a failure leaves the remote url in place."""
-        if media_id in self._downloading or self.local_file(media_id):
-            return self.local_file(media_id)
+        while True:
+            local = self.local_file(media_id)
+            if local:
+                return local
+            active = self._downloads.get(media_id)
+            if active:
+                task, requested_worker = active
+                path = await asyncio.shield(task)
+                if path or self.local_file(media_id):
+                    return path or self.local_file(media_id)
+                # An automatic background download can fail without a worker.
+                # A chained job has its assigned extension and should retry via it.
+                if worker_id and worker_id != requested_worker:
+                    if self._downloads.get(media_id) == active:
+                        self._downloads.pop(media_id, None)
+                    continue
+                return None
+            break
         row = self.get(media_id)
         url = (row or {}).get("url")
         if not url:
             return None
-        self._downloading.add(media_id)
+        task = asyncio.create_task(self._download_once(media_id, url, worker_id))
+        active = (task, worker_id)
+        self._downloads[media_id] = active
+        task.add_done_callback(lambda done, mid=media_id, entry=active: self._forget_download(mid, entry))
         try:
-            try:
-                async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
-                    resp = await client.get(url)
-                if resp.status_code == 200 and resp.content:
-                    mime = resp.headers.get("content-type", "").split(";")[0].strip() or None
-                    return self.save_bytes(media_id, resp.content, mime)
-                log.info("direct download of %s answered %s; asking a worker", media_id, resp.status_code)
-            except httpx.HTTPError as exc:
-                log.info("direct download of %s failed (%s); asking a worker", media_id, exc)
-            worker = self.hub.pick()
-            if worker is None:
-                return None
-            result = await self.hub.fetch(worker, url)
-            if result.get("b64"):
-                return self.save_bytes(media_id, base64.b64decode(result["b64"]), result.get("mime"))
-            log.warning("worker could not fetch %s: %s", media_id, result.get("error"))
-            return None
+            return await asyncio.shield(task)
         finally:
-            self._downloading.discard(media_id)
+            if task.done() and self._downloads.get(media_id) == active:
+                self._downloads.pop(media_id, None)
+
+    def _forget_download(self, media_id: str, entry: tuple[asyncio.Task, Optional[str]]) -> None:
+        if self._downloads.get(media_id) == entry:
+            self._downloads.pop(media_id, None)
+
+    async def _download_once(self, media_id: str, url: str, worker_id: Optional[str]) -> Optional[Path]:
+        try:
+            async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
+                resp = await client.get(url)
+            if resp.status_code == 200 and resp.content:
+                mime = resp.headers.get("content-type", "").split(";")[0].strip() or None
+                return self.save_bytes(media_id, resp.content, mime)
+            log.info("direct download of %s answered %s; asking a worker", media_id, resp.status_code)
+        except httpx.HTTPError as exc:
+            log.info("direct download of %s failed (%s); asking a worker", media_id, exc)
+        worker = self.hub.pick(worker_id) if worker_id else self.hub.pick()
+        if worker is None:
+            return None
+        try:
+            result = await self.hub.fetch(worker, url)
+        except Exception as exc:  # noqa: BLE001 - a best-effort fetch must not strand chained jobs
+            log.info("worker fetch of %s failed: %s", media_id, exc)
+            return None
+        if result.get("b64"):
+            return self.save_bytes(media_id, base64.b64decode(result["b64"]), result.get("mime"))
+        log.warning("worker could not fetch %s: %s", media_id, result.get("error"))
+        return None

@@ -191,7 +191,7 @@ export function reuseSpec(spec: any): 'image' | 'character' | 'video' | null {
 }
 
 /** Add a media id to a field of a form ("Dùng cho"). */
-export function useMediaIn(
+export function addMediaToForm(
   page: 'image' | 'character' | 'video',
   fieldName: string,
   mediaId: string,

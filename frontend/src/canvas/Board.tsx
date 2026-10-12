@@ -13,6 +13,7 @@ import {
   type NodeChange,
   type OnConnectStartParams,
   type OnNodeDrag,
+  type Viewport,
 } from "@xyflow/react";
 
 import { useBoardStore, type FlowNode, type NodeType } from "../store/board";
@@ -107,6 +108,8 @@ function DropAddPopover({
 export function Board() {
   const nodes = useBoardStore((s) => s.nodes);
   const edges = useBoardStore((s) => s.edges);
+  const viewport = useBoardStore((s) => s.viewport);
+  const persistViewport = useBoardStore((s) => s.persistViewport);
   const setNodes = useBoardStore((s) => s.setNodes);
   const setEdges = useBoardStore((s) => s.setEdges);
   const persistNodePosition = useBoardStore((s) => s.persistNodePosition);
@@ -206,6 +209,10 @@ export function Board() {
     [persistNodePosition],
   );
 
+  const onMoveEnd = useCallback((_event: MouseEvent | TouchEvent | null, next: Viewport) => {
+    void persistViewport(next);
+  }, [persistViewport]);
+
   const onConnect = useCallback(
     (connection: Connection) => {
       if (connection.source && connection.target) {
@@ -289,7 +296,7 @@ export function Board() {
       if (node.data.mediaId) {
         s.openResultViewer(node.id);
       } else {
-        s.openGenerationDialog(node.id, node.data.prompt ?? "");
+        s.openGenerationDialog(node.id, node.data.generation?.prompt ?? "");
       }
     },
     [],
@@ -331,7 +338,7 @@ export function Board() {
       if (target.data.mediaId) {
         s.openResultViewer(target.id);
       } else {
-        s.openGenerationDialog(target.id, target.data.prompt ?? "");
+        s.openGenerationDialog(target.id, target.data.generation?.prompt ?? "");
       }
     };
     el.addEventListener("keydown", onKeyDown);
@@ -359,12 +366,14 @@ export function Board() {
         onNodesDelete={onNodesDelete}
         onEdgesDelete={onEdgesDelete}
         onNodeDoubleClick={onNodeDoubleClick}
+        onMoveEnd={onMoveEnd}
         deleteKeyCode={["Backspace", "Delete"]}
         defaultEdgeOptions={defaultEdgeOptions}
         // Larger connection-drop radius so users don't have to land
         // pixel-perfect on the handle to complete an edge.
         connectionRadius={32}
-        fitView
+        fitView={!viewport}
+        defaultViewport={viewport ?? undefined}
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#2a2e38" />

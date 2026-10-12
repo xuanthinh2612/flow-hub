@@ -5,10 +5,12 @@ import {
   getRequest,
   listBoardRequests,
   patchNode,
-} from "./dummyBoardApi";
-import { useBoardStore, type FlowboardNodeData } from "./board";
+  cancelCanvasRequest,
+  resumeCanvasChain as resumeCanvasChainRequest,
+} from "./boardApi";
+import { useBoardStore, type FlowboardNodeData, type NodeGeneration } from "./board";
 import { useSettingsStore, type MediaProviderKey } from "./settings";
-import { extractAndUploadLastFrame } from "../utils/videoFrame";
+import { writeNodeGenerationNow } from "../utils/nodeGenerationSettings";
 
 type PollEntry = { requestId: string | number; timerId: ReturnType<typeof setTimeout> | null };
 
@@ -31,6 +33,8 @@ const SIDECAR_TYPES = new Set<string>([
 
 interface GenerationState {
   active: Record<string, PollEntry>;
+  canceling: Record<string, boolean>;
+  resuming: Record<string, boolean>;
   // Sidecar polls get their own ownership map, NOT a second entry in
   // `active`. The two kinds are independent concerns that can legitimately
   // run on the same node at the same time — a generation writes media, a
@@ -62,16 +66,20 @@ interface GenerationState {
       paygateTier?: string;
       kind?: "image" | "video";
       videoMode?: "t2v" | "i2v" | "r2v";
+      cameraMode?: "static" | "dynamic";
       sourceMediaId?: string;
+      sourceVideoId?: string;
       // Multi-source-image i2v: when the upstream image has N variants
       // we generate one video per variant. Backend sends N items in the
       // batchAsyncGenerate body so all are dispatched together.
       sourceMediaIds?: string[];
+      sourceVideoIds?: string[];
       variantCount?: number;
       // Per-variant prompts. When provided, each variant uses its own
       // prompt — required for batch auto-prompt to keep poses distinct
       // across the 4 generated images.
       prompts?: string[];
+      mediaProvider?: MediaProviderKey;
     },
   ): Promise<void>;
 
@@ -87,6 +95,8 @@ interface GenerationState {
   resumeActiveRequests(boardId: number): Promise<void>;
 
   cancelGeneration(rfId: string): void;
+  cancelCanvasGeneration(rfId: string): Promise<void>;
+  resumeCanvasChain(rfId: string): Promise<void>;
   cancelSidecarPoll(rfId: string): void;
   clearError(): void;
 }
@@ -110,9 +120,9 @@ interface GenerationState {
 // which downstream by clicking the variant tile (Stage 2 UX).
 const REF_SOURCE_TYPES = new Set(["character", "image", "visual_asset", "Storyboard", "video"]);
 
-async function collectUpstreamRefMediaIdsAsync(targetRfId: string): Promise<string[]> {
+function collectUpstreamVideoGenerationSources(targetRfId: string): Array<{ mediaId: string; isVideo: boolean }> {
   const { nodes, edges } = useBoardStore.getState();
-  const ids: string[] = [];
+  const sources: Array<{ mediaId: string; isVideo: boolean }> = [];
   for (const e of edges) {
     if (e.target !== targetRfId) continue;
     const src = nodes.find((n) => n.id === e.source);
@@ -136,56 +146,22 @@ async function collectUpstreamRefMediaIdsAsync(targetRfId: string): Promise<stri
       chosen = variants[0] as string;
     }
 
-    if (chosen) {
-      if (src.data.type === "video") {
-        try {
-          useBoardStore.getState().updateNodeData(targetRfId, { error: 'Đang trích xuất frame từ video...' });
-          const extractedId = await extractAndUploadLastFrame(chosen);
-          ids.push(extractedId);
-          useBoardStore.getState().updateNodeData(targetRfId, { error: undefined });
-        } catch (err) {
-          console.error("Failed to extract frame from upstream video", err);
-          throw new Error("Không thể trích xuất frame từ video nguồn: " + (err instanceof Error ? err.message : String(err)));
-        }
-      } else {
-        ids.push(chosen);
-      }
-    }
+    if (chosen) sources.push({ mediaId: chosen, isVideo: src.data.type === "video" });
   }
-  return ids;
+  return sources;
 }
 
-function collectUpstreamRefMediaIds(targetRfId: string): string[] {
+function hasPendingUpstreamGeneration(targetRfId: string): boolean {
   const { nodes, edges } = useBoardStore.getState();
-  const ids: string[] = [];
-  for (const e of edges) {
-    if (e.target !== targetRfId) continue;
-    const src = nodes.find((n) => n.id === e.source);
-    if (!src || !REF_SOURCE_TYPES.has(src.data.type)) continue;
-
-    const variants = Array.isArray(src.data.mediaIds) ? src.data.mediaIds : [];
-    const pinned = (e.data?.sourceVariantIdx ?? null) as number | null;
-
-    let chosen: string | null = null;
-    if (
-      pinned !== null
-      && pinned >= 0
-      && pinned < variants.length
-      && typeof variants[pinned] === "string"
-      && variants[pinned]
-    ) {
-      chosen = variants[pinned] as string;
-    } else if (typeof src.data.mediaId === "string" && src.data.mediaId) {
-      chosen = src.data.mediaId;
-    } else if (variants.length > 0 && typeof variants[0] === "string" && variants[0]) {
-      chosen = variants[0] as string;
-    }
-
-    // Note: collectUpstreamRefMediaIds is synchronous and used by the dialog preview.
-    // The dialog preview will just use the video's poster (which might not be the exact extracted frame yet).
-    if (chosen) ids.push(chosen);
-  }
-  return ids;
+  return edges.some((edge) => {
+    if (edge.target !== targetRfId) return false;
+    const source = nodes.find((node) => node.id === edge.source);
+    if (!source) return false;
+    if (source.data.status === "queued" || source.data.status === "running") return true;
+    const hasMedia = Boolean(source.data.mediaId)
+      || (Array.isArray(source.data.mediaIds) && source.data.mediaIds.some(Boolean));
+    return source.data.status === "idle" && !hasMedia;
+  });
 }
 
 // Request types that render media. Mirrors `MEDIA_PRODUCING_TYPES` in
@@ -328,6 +304,8 @@ function attachPoll(rfId: string, requestId: string | number, opts: PollOpts) {
           }
           useBoardStore.getState().updateNodeData(rfId, {
             status: "done",
+            lastRequestId: String(requestId),
+            lastRequestStatus: "done",
             ...(producesMedia
               ? { mediaId, mediaIds, slotErrors: slotErrors ?? undefined }
               : {}),
@@ -385,12 +363,20 @@ function attachPoll(rfId: string, requestId: string | number, opts: PollOpts) {
                 // when this run was clean; otherwise persist the
                 // partial summary so it survives reload.
                 error: partialError ?? null,
+                lastRequestId: String(requestId),
+                lastRequestStatus: "done",
                 ...(stampedImageModel ? { imageModel: stampedImageModel } : {}),
                 ...(stampedVideoQuality ? { videoQuality: stampedVideoQuality } : {}),
               },
             }).catch(() => {
               // Non-fatal: the in-memory state is still correct for this session.
             });
+          }
+          if (!isNaN(dbId) && (!producesMedia || !mediaId)) {
+            patchNode(dbId, {
+              status: "done",
+              data: { lastRequestId: String(requestId), lastRequestStatus: "done" },
+            }).catch(() => {});
           }
           // Generation results always carry a prompt (the one we just
           // dispatched with), and downstream synth treats prompt as the
@@ -414,17 +400,52 @@ function attachPoll(rfId: string, requestId: string | number, opts: PollOpts) {
             req.status === "timeout"
               ? `Timed out after 5 minutes (${req.error ?? "video_timeout"})`
               : (req.error ?? "unknown");
-          useBoardStore.getState().updateNodeData(rfId, { status: "error", error: errMsg });
+          useBoardStore.getState().updateNodeData(rfId, {
+            status: "error",
+            error: errMsg,
+            canceled: false,
+            lastRequestId: String(requestId),
+            lastRequestStatus: req.status,
+          });
+          const failedNodeId = Number.parseInt(rfId, 10);
+          if (!Number.isNaN(failedNodeId)) {
+            patchNode(failedNodeId, {
+              status: "error",
+              data: {
+                error: errMsg,
+                canceled: false,
+                lastRequestId: String(requestId),
+                lastRequestStatus: req.status,
+              },
+            }).catch(() => {});
+          }
           useGenerationStore.setState((s) => {
             const next = { ...s.active };
             delete next[rfId];
             return { active: next, error: errMsg };
           });
         } else if (req.status === "canceled") {
-          // User-initiated cancel from the activity bell. Don't
-          // stamp the node as 'error' — clear the in-flight state
-          // and leave whatever the node was showing before.
-          useBoardStore.getState().updateNodeData(rfId, { status: "idle" });
+          // Preserve cancellation as a retryable terminal state so the
+          // Canvas can offer "resume chain from here" after a reload.
+          useBoardStore.getState().updateNodeData(rfId, {
+            status: "error",
+            error: "Đã hủy",
+            canceled: true,
+            lastRequestId: String(requestId),
+            lastRequestStatus: "canceled",
+          });
+          const canceledNodeId = Number.parseInt(rfId, 10);
+          if (!Number.isNaN(canceledNodeId)) {
+            patchNode(canceledNodeId, {
+              status: "error",
+              data: {
+                error: "Đã hủy",
+                canceled: true,
+                lastRequestId: String(requestId),
+                lastRequestStatus: "canceled",
+              },
+            }).catch(() => {});
+          }
           useGenerationStore.setState((s) => {
             const next = { ...s.active };
             delete next[rfId];
@@ -639,6 +660,8 @@ function attachSidecarPoll(rfId: string, requestId: string | number, type: Sidec
 
 export const useGenerationStore = create<GenerationState>((set, get) => ({
   active: {},
+  canceling: {},
+  resuming: {},
   sidecar: {},
   openDialog: { rfId: null, prompt: "" },
   openViewer: { rfId: null, idx: 0 },
@@ -687,15 +710,20 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     kind?: "image" | "video";
     videoMode?: "t2v" | "i2v" | "r2v";
     sourceMediaId?: string;
+    sourceVideoId?: string;
     sourceMediaIds?: string[];
+    sourceVideoIds?: string[];
     variantCount?: number;
     prompts?: string[];
     mediaProvider?: MediaProviderKey;
+    cameraMode?: "static" | "dynamic";
   }) {
     // "muse" = delegated to a Pax worker — skips the Flow project and
     // paygate pre-flights below entirely (no Flow involved).
+    const settings = useSettingsStore.getState();
+    const nodeGeneration = useBoardStore.getState().nodes.find((node) => node.id === rfId)?.data.generation ?? {};
     const mediaProvider: MediaProviderKey =
-      opts.mediaProvider ?? useSettingsStore.getState().mediaProvider;
+      opts.mediaProvider ?? nodeGeneration.backend ?? settings.mediaProvider;
     const useMuse = mediaProvider === "muse";
     const projectId = useMuse ? "" : await get().ensureProjectId();
     if (projectId === null) return;
@@ -716,8 +744,21 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         status: "error",
         error: "paygate_tier_unknown",
       });
+      const failedNodeId = parseInt(rfId, 10);
+      if (!isNaN(failedNodeId)) {
+        await patchNode(failedNodeId, { status: "error", data: { error: "paygate_tier_unknown" } }).catch(() => {});
+      }
       return;
     }
+
+    // A newly placed canvas node exists only in this project's local draft.
+    // Persist it to SQLite at the point generation is actually requested.
+    const promotedId = await useBoardStore.getState().promoteNodeForGeneration(rfId);
+    if (!promotedId) {
+      set({ error: "Could not save this canvas node before generation" });
+      return;
+    }
+    rfId = promotedId;
 
     // Release this node from whatever poll was watching it. Dropping the
     // `active` entry (not just the timer) is what makes the outgoing chain
@@ -727,24 +768,74 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     // `resumeActiveRequests` from ever re-attaching to this node.
     get().cancelGeneration(rfId);
 
+    const kind = opts.kind ?? "image";
+    const previousGeneration = useBoardStore.getState().nodes.find((node) => node.id === rfId)?.data.generation ?? nodeGeneration;
+    const configuredModel = previousGeneration.model;
+    const selectedVideoFamily = configuredModel?.family === "omni_flash" ? "omni_flash" : "veo";
+    const selectedDuration = previousGeneration.duration ?? settings.omniFlashDuration;
+    const selectedResolution = previousGeneration.resolution ?? settings.omniFlashResolution;
+    const selectedQuality = configuredModel?.quality ?? settings.videoQuality;
+    const selectedImageModel = configuredModel?.family === "image" && configuredModel.id ? configuredModel.id : settings.imageModel;
+    const incomingCanvasSource = useBoardStore.getState().edges.some((edge) => edge.target === rfId);
+    const effectiveVideoMode = opts.videoMode ?? (incomingCanvasSource
+      ? previousGeneration.connectedVideoMode ?? (previousGeneration.videoMode === "r2v" ? "r2v" : "i2v")
+      : previousGeneration.independentVideoMode ?? previousGeneration.videoMode ?? "t2v");
+    const effectiveAspectRatio = previousGeneration.aspectRatio ?? opts.aspectRatio ?? (kind === "video"
+      ? selectedVideoFamily === "omni_flash" ? "VIDEO_ASPECT_RATIO_PORTRAIT" : "VIDEO_ASPECT_RATIO_LANDSCAPE"
+      : "IMAGE_ASPECT_RATIO_LANDSCAPE");
+    const generation: NodeGeneration = {
+      ...previousGeneration,
+      backend: mediaProvider,
+      aspectRatio: effectiveAspectRatio,
+      model: kind === "video"
+        ? selectedVideoFamily === "omni_flash"
+          ? {
+              family: "omni_flash",
+              id: configuredModel?.id ?? `abra_r2v_${selectedDuration}s${selectedResolution === "360p" ? "_360p" : ""}`,
+            }
+          : { ...(configuredModel?.id ? { id: configuredModel.id } : {}), family: "veo", quality: selectedQuality }
+        : { family: "image", id: selectedImageModel },
+      ...(kind === "video" && selectedVideoFamily === "omni_flash"
+        ? { duration: selectedDuration, resolution: selectedResolution }
+        : kind === "video" ? { duration: null, resolution: null } : {}),
+      ...(kind === "video" && opts.cameraMode ? { camera: opts.cameraMode } : {}),
+      ...(kind === "video" ? { videoMode: effectiveVideoMode } : {}),
+      ...(opts.prompts?.length ? { prompts: opts.prompts } : {}),
+    };
+
     // Optimistically update node — record variantCount so the placeholder
     // grid matches the eventual variant count even before generation finishes.
-    const variantCount = Math.max(1, Math.min(opts.variantCount ?? 1, 4));
+    const variantCount = Math.max(1, Math.min(opts.variantCount ?? previousGeneration.variants ?? 1, 4));
+    const dbIdToPatch = parseInt(rfId, 10);
+    const generationToPersist = { ...generation, prompt: opts.prompt, variants: variantCount };
     useBoardStore.getState().updateNodeData(rfId, {
       status: "queued",
-      prompt: opts.prompt,
+      generation: generationToPersist,
       error: undefined,
+      canceled: false,
+      lastRequestId: null,
+      lastRequestStatus: null,
       variantCount,
       mediaIds: undefined,
       mediaId: undefined,
     });
-    const dbIdToPatch = parseInt(rfId, 10);
+    if (dbIdToPatch > 0) {
+      try {
+        await writeNodeGenerationNow(useBoardStore.getState().boardPublicId, rfId, generationToPersist);
+      } catch (err) {
+        set({ error: err instanceof Error ? err.message : "Could not save node settings" });
+        return;
+      }
+    }
     if (!isNaN(dbIdToPatch)) {
-      patchNode(dbIdToPatch, {
+      await patchNode(dbIdToPatch, {
         status: "queued",
         data: {
-          prompt: opts.prompt,
+          generation: generationToPersist,
           error: null,
+          canceled: null,
+          lastRequestId: null,
+          lastRequestStatus: null,
           variantCount,
           mediaIds: null,
           mediaId: null,
@@ -753,26 +844,33 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     }
 
     // Create request
-    const kind = opts.kind ?? "image";
     let reqDto;
     try {
       const nodeDbId = parseInt(rfId, 10);
       if (kind === "video") {
         const settings = useSettingsStore.getState();
-        const isOmni = settings.videoModel === "omni_flash";
-        const videoMode = opts.videoMode ?? "t2v";
+        const isOmni = generation.model?.family === "omni_flash";
+        const videoMode = effectiveVideoMode;
 
         // Both Omni Flash and Veo's r2v mode take ingredients (ref_media_ids)
         if (isOmni || videoMode === "r2v") {
-          let ingredients = opts.sourceMediaIds && opts.sourceMediaIds.length > 0 
-            ? opts.sourceMediaIds 
-            : await collectUpstreamRefMediaIdsAsync(rfId);
+          const upstreamSources = opts.sourceMediaIds || opts.sourceVideoIds
+            ? []
+            : collectUpstreamVideoGenerationSources(rfId);
+          const ingredients = opts.sourceMediaIds?.length
+            ? opts.sourceMediaIds
+            : upstreamSources.filter((source) => !source.isVideo).map((source) => source.mediaId);
+          const videoIngredients = opts.sourceVideoIds?.length
+            ? opts.sourceVideoIds
+            : upstreamSources.filter((source) => source.isVideo).map((source) => source.mediaId);
             
-          if (ingredients.length === 0) {
+          if (ingredients.length === 0 && videoIngredients.length === 0 && !hasPendingUpstreamGeneration(rfId)) {
+            const error = "no ingredients";
             useBoardStore.getState().updateNodeData(rfId, {
               status: "error",
-              error: "no ingredients",
+              error,
             });
+            if (!isNaN(nodeDbId)) await patchNode(nodeDbId, { status: "error", data: { error } }).catch(() => {});
             set({
               error: "Vui lòng thêm ít nhất 1 ảnh (ingredient) để tạo video.",
             });
@@ -788,8 +886,10 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                 media_provider: mediaProvider,
                 project_id: projectId,
                 ref_media_ids: ingredients,
-                duration_s: settings.omniFlashDuration,
-                aspect_ratio: opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_PORTRAIT",
+                extract_video_ids: videoIngredients,
+                duration_s: generation.duration ?? settings.omniFlashDuration,
+                resolution: generation.resolution ?? settings.omniFlashResolution,
+                aspect_ratio: effectiveAspectRatio,
                 paygate_tier: opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
                 variant_count: variantCount,
               },
@@ -803,10 +903,12 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                 prompt: opts.prompt,
                 media_provider: mediaProvider,
                 project_id: projectId,
+                video_mode: videoMode,
                 ref_media_ids: ingredients,
-                aspect_ratio: opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_LANDSCAPE",
+                extract_video_ids: videoIngredients,
+                aspect_ratio: effectiveAspectRatio,
                 paygate_tier: opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
-                video_quality: settings.videoQuality,
+                video_quality: generation.model?.quality ?? settings.videoQuality,
                 variant_count: variantCount,
               },
             });
@@ -814,20 +916,21 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         } else {
           // Veo i2v or t2v path
           const hasMulti = Array.isArray(opts.sourceMediaIds) && opts.sourceMediaIds.length > 0;
-          const isT2V = videoMode === "t2v" && !hasMulti && !opts.sourceMediaId;
+          const isT2V = videoMode === "t2v" && !hasMulti && !opts.sourceMediaId && !opts.sourceVideoId;
           const videoParams: Record<string, unknown> = {
             prompt: opts.prompt,
             media_provider: mediaProvider,
             project_id: projectId,
-            aspect_ratio: opts.aspectRatio ?? "VIDEO_ASPECT_RATIO_LANDSCAPE",
+            aspect_ratio: effectiveAspectRatio,
             paygate_tier: opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
-            video_quality: settings.videoQuality,
+            video_quality: generation.model?.quality ?? settings.videoQuality,
           };
           if (hasMulti) {
             videoParams.start_media_ids = opts.sourceMediaIds;
           } else if (opts.sourceMediaId) {
             videoParams.start_media_id = opts.sourceMediaId;
           }
+          if (opts.sourceVideoId) videoParams.extract_start_video_id = opts.sourceVideoId;
           reqDto = await createRequest({
             type: isT2V ? "gen_video_text" : "gen_video",
             node_id: isNaN(nodeDbId) ? rfId : nodeDbId,
@@ -835,21 +938,26 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           });
         }
       } else {
-        const refMediaIds = await collectUpstreamRefMediaIdsAsync(rfId);
+        const upstreamSources = collectUpstreamVideoGenerationSources(rfId);
+        const refMediaIds = upstreamSources.filter((source) => !source.isVideo).map((source) => source.mediaId);
+        const extractVideoIds = upstreamSources.filter((source) => source.isVideo).map((source) => source.mediaId);
         const params: Record<string, unknown> = {
           prompt: opts.prompt,
           media_provider: mediaProvider,
           project_id: projectId,
-          aspect_ratio: opts.aspectRatio ?? "IMAGE_ASPECT_RATIO_LANDSCAPE",
+          aspect_ratio: effectiveAspectRatio,
           paygate_tier:
             opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
           variant_count: variantCount,
           // User's image model preference from the Settings panel.
           // Backend resolves the nickname → real Flow model identifier.
-          image_model: useSettingsStore.getState().imageModel,
+          image_model: generation.model?.id ?? settings.imageModel,
         };
         if (refMediaIds.length > 0) {
           params.ref_media_ids = refMediaIds;
+        }
+        if (extractVideoIds.length > 0) {
+          params.extract_video_ids = extractVideoIds;
         }
         // Per-variant prompts: when present, each variant uses its own
         // text instead of all sharing `params.prompt`. Backend falls back
@@ -864,15 +972,45 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         });
       }
     } catch (err) {
-      useBoardStore.getState().updateNodeData(rfId, { status: "error", error: err instanceof Error ? err.message : "request failed" });
+      const message = err instanceof Error ? err.message : "request failed";
+      useBoardStore.getState().updateNodeData(rfId, { status: "error", error: message });
+      if (!isNaN(dbIdToPatch)) await patchNode(dbIdToPatch, { status: "error", data: { error: message } }).catch(() => {});
       set({ error: err instanceof Error ? err.message : "Generation failed" });
       return;
+    }
+
+    const selectedModel = generation.model;
+    const resolvedModel = typeof reqDto.resolved_model === "string" ? reqDto.resolved_model : undefined;
+    const persistedGenerationConfig: NodeGeneration = {
+      ...generation,
+      prompt: opts.prompt,
+      variants: variantCount,
+      model: selectedModel
+        ? { ...selectedModel, ...(resolvedModel ? { id: resolvedModel } : {}) }
+        : undefined,
+      operation: reqDto.type,
+    };
+    useBoardStore.getState().updateNodeData(rfId, {
+      lastRequestId: String(reqDto.id),
+      lastRequestStatus: "queued",
+      generation: persistedGenerationConfig,
+    });
+    if (!isNaN(dbIdToPatch)) {
+      await patchNode(dbIdToPatch, {
+        status: "queued",
+        data: {
+          lastRequestId: String(reqDto.id),
+          lastRequestStatus: "queued",
+          canceled: null,
+          generation: persistedGenerationConfig,
+        },
+      }).catch(() => {});
     }
 
     // Start polling — same machinery the reload-resume path re-attaches.
     attachPoll(rfId, reqDto.id, {
       prompt: opts.prompt,
-      aspectRatio: opts.aspectRatio,
+      aspectRatio: effectiveAspectRatio,
     });
   },
 
@@ -947,39 +1085,74 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       // loop deliberately doesn't stamp (it only reschedules).
       useBoardStore.getState().updateNodeData(rfId, {
         status: item.status === "running" ? "running" : "queued",
+        lastRequestId: String(item.id),
+        lastRequestStatus: item.status,
         // Only override the prompt when we actually have one — a blank
         // would wipe what the board just loaded from the DB.
         ...(prompt ? { prompt } : {}),
       });
+      const resumedNodeId = Number.parseInt(rfId, 10);
+      if (!Number.isNaN(resumedNodeId)) {
+        patchNode(resumedNodeId, {
+          status: item.status === "running" ? "running" : "queued",
+          data: { lastRequestId: String(item.id), lastRequestStatus: item.status },
+        }).catch(() => {});
+      }
 
       attachPoll(rfId, item.id, { prompt, aspectRatio });
     }
   },
 
   async refineImage(rfId, opts) {
-    const mediaProvider: MediaProviderKey = useSettingsStore.getState().mediaProvider;
+    const settings = useSettingsStore.getState();
+    const node = useBoardStore.getState().nodes.find((n) => n.id === rfId);
+    const mediaProvider: MediaProviderKey = node?.data.generation?.backend ?? settings.mediaProvider;
     const useMuse = mediaProvider === "muse";
     const projectId = useMuse ? "" : await get().ensureProjectId();
     if (projectId === null) return;
 
-    const node = useBoardStore.getState().nodes.find((n) => n.id === rfId);
     const sourceMediaId = node?.data.mediaId;
     if (!sourceMediaId) {
       set({ error: "no source image to refine" });
       return;
     }
 
+    const promotedId = await useBoardStore.getState().promoteNodeForGeneration(rfId);
+    if (!promotedId) {
+      set({ error: "Could not save this canvas node before image edit" });
+      return;
+    }
+    rfId = promotedId;
+
     get().cancelGeneration(rfId);
 
+    const editGeneration: NodeGeneration = {
+      ...(node?.data.generation ?? {}),
+      prompt: opts.prompt,
+      backend: mediaProvider,
+      aspectRatio: opts.aspectRatio ?? "IMAGE_ASPECT_RATIO_LANDSCAPE",
+      model: { family: "image", id: node?.data.generation?.model?.id ?? settings.imageModel },
+      operation: "edit_image",
+      variants: 1,
+    };
     useBoardStore.getState().updateNodeData(rfId, {
       status: "queued",
-      prompt: opts.prompt,
+      generation: editGeneration,
       error: undefined,
+      canceled: false,
+      lastRequestId: null,
+      lastRequestStatus: null,
       variantCount: 1,
       mediaIds: undefined,
     });
 
     const nodeDbId = parseInt(rfId, 10);
+    try {
+      await writeNodeGenerationNow(useBoardStore.getState().boardPublicId, rfId, editGeneration);
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : "Could not save node settings" });
+      return;
+    }
     let reqDto;
     try {
       reqDto = await createRequest({
@@ -991,9 +1164,9 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           project_id: projectId,
           source_media_id: sourceMediaId,
           ref_media_ids: opts.refMediaIds ?? [],
-          aspect_ratio: opts.aspectRatio ?? "IMAGE_ASPECT_RATIO_LANDSCAPE",
+          aspect_ratio: opts.aspectRatio ?? editGeneration.aspectRatio,
           paygate_tier: get().paygateTier ?? "PAYGATE_TIER_ONE",
-          image_model: useSettingsStore.getState().imageModel,
+          image_model: editGeneration.model?.id ?? settings.imageModel,
         },
       });
     } catch (err) {
@@ -1010,6 +1183,17 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     // token, and reload-resume — `resumeActiveRequests` re-attaches through
     // `attachPoll`, so a refine that only lived inside its private loop came
     // back from an F5 with nobody watching it.
+    useBoardStore.getState().updateNodeData(rfId, {
+      lastRequestId: String(reqDto.id),
+      lastRequestStatus: "queued",
+    });
+    const refinedNodeId = Number.parseInt(rfId, 10);
+    if (!Number.isNaN(refinedNodeId)) {
+      await patchNode(refinedNodeId, {
+        status: "queued",
+        data: { lastRequestId: String(reqDto.id), lastRequestStatus: "queued", canceled: null },
+      }).catch(() => {});
+    }
     attachPoll(rfId, reqDto.id, {
       prompt: opts.prompt,
       aspectRatio: opts.aspectRatio,
@@ -1026,6 +1210,107 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       delete next[rfId];
       return { active: next };
     });
+  },
+
+  async cancelCanvasGeneration(rfId) {
+    if (get().canceling[rfId]) return;
+    set((s) => ({ canceling: { ...s.canceling, [rfId]: true }, error: null }));
+    try {
+      let requestId = get().active[rfId]?.requestId;
+      if (requestId === undefined) {
+        const boardId = useBoardStore.getState().boardId;
+        if (boardId === null) throw new Error("Không tìm thấy project Canvas đang mở");
+        const { items } = await listBoardRequests(boardId, { active: true });
+        const request = items.find((item) => String(item.node_id) === rfId);
+        requestId = request?.id;
+      }
+      if (requestId === undefined) {
+        throw new Error("Không tìm thấy generation request đang chạy trên node này");
+      }
+
+      const result = await cancelCanvasRequest(requestId);
+      if (result.status === "canceled") {
+        // Stop local polling only after the backend confirms cancellation.
+        get().cancelGeneration(rfId);
+        useBoardStore.getState().updateNodeData(rfId, {
+          status: "error",
+          error: "Đã hủy",
+          canceled: true,
+          lastRequestStatus: "canceled",
+        });
+        const nodeDbId = Number.parseInt(rfId, 10);
+        if (!Number.isNaN(nodeDbId)) {
+          await patchNode(nodeDbId, {
+            status: "error",
+            data: { error: "Đã hủy", canceled: true, lastRequestStatus: "canceled" },
+          }).catch(() => null);
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Không thể hủy generation";
+      set({ error: message });
+    } finally {
+      set((s) => {
+        const next = { ...s.canceling };
+        delete next[rfId];
+        return { canceling: next };
+      });
+    }
+  },
+
+  async resumeCanvasChain(rfId) {
+    if (get().resuming[rfId]) return;
+    const node = useBoardStore.getState().nodes.find((candidate) => candidate.id === rfId);
+    const boardId = useBoardStore.getState().boardId;
+    const requestId = node?.data.lastRequestId;
+    const nodeId = Number.parseInt(rfId, 10);
+    if (boardId === null || Number.isNaN(nodeId) || typeof requestId !== "string") {
+      set({ error: "Không tìm thấy generation request để chạy lại chuỗi" });
+      return;
+    }
+
+    set((s) => ({ resuming: { ...s.resuming, [rfId]: true }, error: null }));
+    try {
+      const { items } = await resumeCanvasChainRequest(boardId, nodeId, requestId);
+      for (const item of items) {
+        const targetRfId = String(item.node_id);
+        const newRequestId = String(item.id);
+        const params = item.params ?? {};
+        get().cancelGeneration(targetRfId);
+        useBoardStore.getState().updateNodeData(targetRfId, {
+          status: "queued",
+          error: undefined,
+          canceled: false,
+          lastRequestId: newRequestId,
+          lastRequestStatus: "queued",
+        });
+        const targetNodeId = Number.parseInt(targetRfId, 10);
+        if (!Number.isNaN(targetNodeId)) {
+          await patchNode(targetNodeId, {
+            status: "queued",
+            data: {
+              error: null,
+              canceled: null,
+              lastRequestId: newRequestId,
+              lastRequestStatus: "queued",
+            },
+          }).catch(() => {});
+        }
+        attachPoll(targetRfId, newRequestId, {
+          prompt: typeof params.prompt === "string" ? params.prompt : "",
+          aspectRatio: typeof params.aspect_ratio === "string" ? params.aspect_ratio : undefined,
+        });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Không thể chạy lại chuỗi";
+      set({ error: message });
+    } finally {
+      set((s) => {
+        const next = { ...s.resuming };
+        delete next[rfId];
+        return { resuming: next };
+      });
+    }
   },
 
   // Sidecar polls live in their own map, so `cancelGeneration` never

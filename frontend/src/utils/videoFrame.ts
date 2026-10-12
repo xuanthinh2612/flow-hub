@@ -1,99 +1,5 @@
-import { uploadImage } from '../canvas/dummyApi';
-import { mediaFile } from '../api/client';
-import type { FlowNode } from '../store/board';
+﻿import type { FlowNode } from '../store/board';
 import type { Edge } from '@xyflow/react';
-
-/**
- * Extracts the last frame of a video by seeking near the end of the video
- * and drawing the frame to an off-screen HTML5 canvas.
- */
-export async function extractVideoLastFrame(videoSrc: string): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement('video');
-    video.crossOrigin = 'anonymous';
-    video.muted = true;
-    video.preload = 'auto';
-    video.playsInline = true;
-
-    let timeoutId: any = null;
-
-    const cleanup = () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      video.onloadedmetadata = null;
-      video.onseeked = null;
-      video.onerror = null;
-      video.removeAttribute('src');
-      video.load();
-    };
-
-    timeoutId = setTimeout(() => {
-      cleanup();
-      reject(new Error('Timeout khi tải video để trích xuất frame cuối (15s)'));
-    }, 15000);
-
-    video.onloadedmetadata = () => {
-      // Seek to 0.08s before duration to capture the final stable frame
-      const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
-      const targetTime = Math.max(0, duration - 0.08);
-      if (targetTime === 0 && video.currentTime === 0) {
-        video.currentTime = 0.001;
-      } else {
-        video.currentTime = targetTime;
-      }
-    };
-
-    video.onseeked = () => {
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth || 1280;
-        canvas.height = video.videoHeight || 720;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          cleanup();
-          reject(new Error('Không thể tạo 2D context cho canvas'));
-          return;
-        }
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob(
-          (blob) => {
-            cleanup();
-            if (blob) {
-              resolve(blob);
-            } else {
-              reject(new Error('Không thể tạo file ảnh từ frame video'));
-            }
-          },
-          'image/jpeg',
-          0.95
-        );
-      } catch (err) {
-        cleanup();
-        reject(err);
-      }
-    };
-
-    video.onerror = () => {
-      cleanup();
-      reject(new Error('Lỗi khi tải video để trích xuất frame cuối. Vui lòng kiểm tra lại URL video.'));
-    };
-
-    video.src = videoSrc;
-  });
-}
-
-/**
- * Extracts the last frame of a given video mediaId and uploads it as an image
- * to flow-hub, returning the new media_id.
- */
-export async function extractAndUploadLastFrame(videoMediaId: string): Promise<string> {
-  const videoUrl = mediaFile(videoMediaId);
-  const blob = await extractVideoLastFrame(videoUrl);
-  const file = new File([blob], `last_frame_${videoMediaId.slice(0, 8)}_${Date.now()}.jpg`, {
-    type: 'image/jpeg',
-  });
-  const uploaded = await uploadImage(file);
-  return uploaded.media_id;
-}
 
 export type VideoModeType = 't2v' | 'i2v' | 'video_continuation' | 'r2v';
 
@@ -166,4 +72,5 @@ export function getVideoUpstreamInfo(
     upstreamNodes: [],
   };
 }
+
 

@@ -341,13 +341,42 @@ def first_last_request(prompt: str, project_id: str, start_media_id: str, end_me
 
 
 def reference_video_request(prompt: str, project_id: str, reference_media_ids: list[str], aspect: int,
-                            model: str) -> str:
-    """Ingredients / reference-to-video (MZZa6b). VERIFIED for abra_r2v_6s_360p
-    and veo_3_1_r2v_fast_landscape, one reference image."""
+                            model: str, reference_media_names: Optional[list[str]] = None) -> str:
+    """Ingredients / reference-to-video (MZZa6b).
+
+    Flow builds through 20261005 used the legacy prompt-only slot. Build
+    20261007.14 embeds each [media id, display name] beside the prompt for
+    Veo 3.1 Fast and Lite, while retaining the separate ingredient-id list.
+    Landscape puts the prompt last; portrait puts it first and adds a [" "]
+    separator after every reference.
+    Pass ``reference_media_names`` to emit that current shape; omit it to
+    reproduce legacy observations (and Omni's prompt-only shape).
+    """
     refs = [str(mid) for mid in reference_media_ids if mid]
     if not refs:
         raise ValueError("reference-to-video needs at least one reference image")
-    request = [prompt_block(prompt), [[None, mid] for mid in refs], model, aspect, None, client_ids()]
+    prompt_part = prompt_block(prompt)
+    if reference_media_names is not None:
+        names = [str(name) for name in reference_media_names]
+        if len(names) != len(refs):
+            raise ValueError("reference_video_request needs one name per reference image")
+        # Current Flow builds the ingredient name and prompt together in slot 0,
+        # while also retaining the media-id-only ingredient list in slot 1.
+        # Portrait Flow requests put the prompt first, then every reference
+        # followed by a whitespace separator. Landscape puts prompt last.
+        if aspect == VIDEO_PORTRAIT:
+            embedded_parts = [[prompt]]
+            for mid, name in zip(refs, names):
+                embedded_parts.extend(([None, [[mid, name]]], [" "]))
+        else:
+            embedded_parts = []
+            for index, (mid, name) in enumerate(zip(refs, names)):
+                if index:
+                    embedded_parts.append([" "])
+                embedded_parts.append([None, [[mid, name]]])
+            embedded_parts.append([prompt])
+        prompt_part = [None, None, [embedded_parts]]
+    request = [prompt_part, [[None, mid] for mid in refs], model, aspect, None, client_ids()]
     if model.endswith("_360p"):
         request.extend([None, None, None, None, None, [4]])
     return build_envelope(RPC_GEN_VIDEO_REFERENCES, [[request], context(project_id), [client_uuid(), 2]])

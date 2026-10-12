@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { MediaItem } from '../api/types';
 import { api, mediaFile, withKey, invalidateMedia } from '../api/client';
 import { useToast } from '../context/ToastContext';
 import { useModal } from '../context/ModalContext';
-import { useMediaIn } from '../utils/storage';
+import { addMediaToForm } from '../utils/storage';
 import { useNavigate } from 'react-router-dom';
 
 const USES = [
@@ -26,7 +26,7 @@ export const MediaModalContent: React.FC<{ mediaId: string; onDeleted?: () => vo
   const { closeModal } = useModal();
   const navigate = useNavigate();
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       setLoading(true);
       const m = await api<MediaItem>(`/api/media/${encodeURIComponent(mediaId)}`);
@@ -38,11 +38,11 @@ export const MediaModalContent: React.FC<{ mediaId: string; onDeleted?: () => vo
     } finally {
       setLoading(false);
     }
-  };
+  }, [mediaId, toast]);
 
   useEffect(() => {
-    load();
-  }, [mediaId]);
+    void load();
+  }, [load]);
 
   if (loading) return <p className="empty">Đang tải…</p>;
   if (error || !media) return <p className="err">{error || 'Không tìm thấy media'}</p>;
@@ -65,7 +65,7 @@ export const MediaModalContent: React.FC<{ mediaId: string; onDeleted?: () => vo
     try {
       await api(`/api/media/${encodeURIComponent(media.id)}/refresh`, { method: 'POST' });
       toast('Đã làm mới URL', 'ok');
-      load();
+      void load();
     } catch (e: any) {
       toast(e.message, 'err');
     }
@@ -84,7 +84,7 @@ export const MediaModalContent: React.FC<{ mediaId: string; onDeleted?: () => vo
   };
 
   const handleUseIn = (u: (typeof USES)[0]) => {
-    useMediaIn(u.page, u.field, media.id, { multi: u.multi !== false, patch: u.patch });
+    addMediaToForm(u.page, u.field, media.id, { multi: u.multi !== false, patch: u.patch });
     closeModal();
     navigate(`/${u.page}`);
     toast(`Đã thêm vào: ${u.label}`, 'ok');

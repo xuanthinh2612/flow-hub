@@ -12,7 +12,12 @@ import {
   useSettingsStore,
   OMNI_FLASH_CREDIT_COST,
   OMNI_FLASH_DURATIONS,
+  OMNI_FLASH_RESOLUTIONS,
+  type ImageModelKey,
+  type MediaProviderKey,
   type OmniFlashDuration,
+  type OmniFlashResolution,
+  type VideoModelFamily,
   type VideoQuality,
 } from "../store/settings";
 import {
@@ -21,10 +26,9 @@ import {
   mediaUrl,
   patchEdge,
   patchNode,
-} from "../canvas/dummyApi";
+} from "../canvas/canvasApi";
 import {
   getVideoUpstreamInfo,
-  extractAndUploadLastFrame,
   type VideoUpstreamInfo,
 } from "../utils/videoFrame";
 import {
@@ -215,11 +219,38 @@ function InfoTip({ tip }: { tip: string }) {
   );
 }
 
+type GenerationFormState = {
+  prompt: string;
+  aspectRatio: string;
+  variants: number;
+  camera: CameraKey;
+  storyboardGrid: StoryboardGrid;
+  charGender: GenderKey | null;
+  charCountry: CountryKey | null;
+  charVibe: VibeKey;
+  charExtras: string;
+  selectedSourceIdx: number[];
+  t2vLibraryMediaId: string | null;
+  t2vLibraryMediaItem: MediaItem | null;
+  independentVideoMediaIds: string[];
+  independentVideoMode: "i2v" | "r2v";
+  connectedVideoMode: "i2v" | "r2v";
+  r2vAdditionalMediaIds: string[];
+  backend: MediaProviderKey;
+  imageModel: ImageModelKey;
+  videoModel: VideoModelFamily;
+  videoQuality: VideoQuality;
+  omniFlashDuration: OmniFlashDuration;
+  omniFlashResolution: OmniFlashResolution;
+};
+
 export function GenerationDialog() {
   const openDialog = useGenerationStore((s) => s.openDialog);
   const closeGenerationDialog = useGenerationStore((s) => s.closeGenerationDialog);
   const dispatchGeneration = useGenerationStore((s) => s.dispatchGeneration);
   const nodes = useBoardStore((s) => s.nodes);
+  const boardId = useBoardStore((s) => s.boardId);
+  const boardPublicId = useBoardStore((s) => s.boardPublicId);
 
   const [prompt, setPrompt] = useState(openDialog.prompt);
   const [aspectRatio, setAspectRatio] = useState<AspectKey>("IMAGE_ASPECT_RATIO_LANDSCAPE");
@@ -262,6 +293,7 @@ export function GenerationDialog() {
   const dialogRef = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLTextAreaElement>(null);
   const triggerRef = useRef<Element | null>(null);
+  const skipInitialFormSave = useRef<string | null>(null);
 
   const rfId = openDialog.rfId;
   const node = nodes.find((n) => n.id === rfId);
@@ -272,19 +304,20 @@ export function GenerationDialog() {
   const nodeCount = nodes.length;
   const edges = useBoardStore((s) => s.edges);
 
-  // Hooks MUST be called unconditionally on every render — pull
-  // videoModel out first, derive the boolean after.
-  const videoModelFamily = useSettingsStore((s) => s.videoModel);
-  const videoQuality = useSettingsStore((s) => s.videoQuality);
-  const setVideoModel = useSettingsStore((s) => s.setVideoModel);
-  const setVideoQuality = useSettingsStore((s) => s.setVideoQuality);
-  const omniFlashDuration = useSettingsStore((s) => s.omniFlashDuration);
-  const setOmniFlashDuration = useSettingsStore(
-    (s) => s.setOmniFlashDuration,
-  );
-  // Generation backend — sticky choice; dispatch reads it from here.
-  const mediaProvider = useSettingsStore((s) => s.mediaProvider);
-  const setMediaProvider = useSettingsStore((s) => s.setMediaProvider);
+  // Settings in the dialog belong to this node. Global settings provide
+  // defaults only when a node has no canonical generation config yet.
+  const defaultVideoModel = useSettingsStore((s) => s.videoModel);
+  const defaultVideoQuality = useSettingsStore((s) => s.videoQuality);
+  const defaultImageModel = useSettingsStore((s) => s.imageModel);
+  const defaultOmniFlashDuration = useSettingsStore((s) => s.omniFlashDuration);
+  const defaultOmniFlashResolution = useSettingsStore((s) => s.omniFlashResolution);
+  const defaultMediaProvider = useSettingsStore((s) => s.mediaProvider);
+  const [videoModelFamily, setVideoModel] = useState<VideoModelFamily>(defaultVideoModel);
+  const [videoQuality, setVideoQuality] = useState<VideoQuality>(defaultVideoQuality);
+  const [imageModel, setImageModel] = useState<ImageModelKey>(defaultImageModel);
+  const [omniFlashDuration, setOmniFlashDuration] = useState<OmniFlashDuration>(defaultOmniFlashDuration);
+  const [omniFlashResolution, setOmniFlashResolution] = useState<OmniFlashResolution>(defaultOmniFlashResolution);
+  const [mediaProvider, setMediaProvider] = useState<MediaProviderKey>(defaultMediaProvider);
   // Auto-detected paygate tier (PAYGATE_TIER_ONE / TIER_TWO). Used to
   // lock the Ultra-only model chips (lite_relaxed) for Pro users — same
   // gating as the SettingsPanel.
@@ -295,10 +328,53 @@ export function GenerationDialog() {
   const isCharacter = targetType === "character";
   const isStoryboard = targetType === "Storyboard";
 
+  // A standalone video node remains structurally t2v in the graph, but
+  // picking library images changes the effective generation mode.
+  const independentVideoEffectiveMode: "t2v" | "i2v" | "r2v" =
+    independentVideoMediaIds.length > 1
+      ? "r2v"
+      : independentVideoMediaIds.length === 1
+        ? independentVideoMode
+        : "t2v";
+  const independentVideoModeLabel =
+    independentVideoEffectiveMode === "t2v"
+      ? "Text → Video (t2v)"
+      : independentVideoEffectiveMode === "i2v"
+        ? "Image → Video (i2v)"
+        : "Ingredients (r2v)";
+
+  const persistIndependentVideoSelection = (
+    mediaIds: string[],
+    mode: "i2v" | "r2v" = independentVideoMode,
+  ) => {
+    if (rfId === null) return;
+    setIndependentVideoMediaIds(mediaIds);
+    useBoardStore.getState().updateNodeGeneration(rfId, {
+      independentVideoMediaIds: mediaIds,
+      independentVideoMode: mode,
+    });
+  };
+
+  const persistIndependentVideoMode = (mode: "i2v" | "r2v") => {
+    if (rfId === null) return;
+    setIndependentVideoMode(mode);
+    useBoardStore.getState().updateNodeGeneration(rfId, {
+      independentVideoMediaIds,
+      independentVideoMode: mode,
+      videoMode: mode,
+    });
+  };
+
   // Detailed mode resolution for video nodes: t2v, i2v, or video_continuation
   const videoInfo: VideoUpstreamInfo | null = isVideo && rfId
     ? getVideoUpstreamInfo(rfId, nodes, edges)
     : null;
+  const hasPendingUpstream = !!videoInfo?.upstreamNodes.some((source) => {
+    if (source.data.status === "queued" || source.data.status === "running") return true;
+    const hasMedia = Boolean(source.data.mediaId)
+      || (Array.isArray(source.data.mediaIds) && source.data.mediaIds.some(Boolean));
+    return source.data.status === "idle" && !hasMedia;
+  });
 
   // Omni Flash is a video model but with image-target semantics: it
   // takes ingredients (multi reference images), NOT a single i2v start
@@ -320,7 +396,7 @@ export function GenerationDialog() {
   const isEffectiveR2v = isVideo && (videoInfo?.mode === "i2v" || videoInfo?.mode === "r2v") && (isOmniVideo || actualConnectedMode === "r2v");
   // Prompt nodes are text-only — clicking Generate runs auto_prompt
   // synthesis from upstream context and writes the result back to
-  // node.data.prompt. No image dispatch, no aspect/variants.
+  // node.data.generation.prompt. No image dispatch, no aspect/variants.
   const isPrompt = targetType === "prompt";
 
   // Find upstream source image for video nodes.
@@ -341,7 +417,7 @@ export function GenerationDialog() {
     : undefined;
   const hasStoryboardUpstream = !!storyboardUpstream;
   const storyboardUpstreamGrid = normaliseStoryboardGrid(
-    storyboardUpstream?.data.storyboardGrid,
+    storyboardUpstream?.data.generation?.storyboardGrid,
   );
   const sourceMediaId = videoInfo?.sourceMediaId ?? null;
   // Drop null placeholders from the upstream variant list — partial-
@@ -376,7 +452,7 @@ export function GenerationDialog() {
         .map((e) => {
           const n = nodes.find((node) => node.id === e.source);
           if (!n || n.data.type !== "prompt") return null;
-          const text = typeof n.data.prompt === "string" ? n.data.prompt : "";
+          const text = typeof n.data.generation?.prompt === "string" ? n.data.generation.prompt : "";
           return { edgeId: e.id, node: n, text };
         })
         .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
@@ -424,11 +500,39 @@ export function GenerationDialog() {
   // Reset form when dialog opens for a different node
   useEffect(() => {
     if (rfId !== null) {
+      const formKey = `${boardPublicId ?? "default"}:${rfId}`;
+      let savedForm: Partial<GenerationFormState> = {};
+      const persistedNode = nodes.find((node) => node.id === rfId);
+      const storedGeneration = persistedNode?.data.generation;
+      const savedGeneration = storedGeneration && typeof storedGeneration === "object"
+        ? storedGeneration as Record<string, unknown>
+        : {};
+      savedForm = savedGeneration as Partial<GenerationFormState>;
+      const storedModel = savedGeneration.model && typeof savedGeneration.model === "object"
+        ? savedGeneration.model as Record<string, unknown>
+        : {};
+      const savedBackend = savedForm.backend ?? savedGeneration.backend ?? defaultMediaProvider;
+      setMediaProvider(savedBackend === "flow" || savedBackend === "muse" ? savedBackend : defaultMediaProvider);
+      const savedImageModel = storedModel.family === "image" ? storedModel.id : defaultImageModel;
+      setImageModel(savedImageModel === "NANO_BANANA_PRO" || savedImageModel === "NANO_BANANA_2" ? savedImageModel : defaultImageModel);
+      const savedVideoModel = storedModel.family;
+      setVideoModel(savedVideoModel === "veo" || savedVideoModel === "omni_flash" ? savedVideoModel : defaultVideoModel);
+      const savedVideoQuality = storedModel.quality;
+      setVideoQuality(savedVideoQuality === "fast" || savedVideoQuality === "lite" || savedVideoQuality === "quality" || savedVideoQuality === "lite_relaxed" ? savedVideoQuality : defaultVideoQuality);
+      const savedDuration = savedGeneration.duration;
+      setOmniFlashDuration(savedDuration === 4 || savedDuration === 6 || savedDuration === 8 || savedDuration === 10 ? savedDuration : defaultOmniFlashDuration);
+      const savedResolution = savedGeneration.resolution;
+      setOmniFlashResolution(savedResolution === "360p" || savedResolution === "720p" ? savedResolution : defaultOmniFlashResolution);
+      // The following state setters hydrate the form. Skip the first save
+      // effect for this node so its pre-hydration render cannot overwrite
+      // the saved draft with defaults.
+      skipInitialFormSave.current = formKey;
+
       // Default: whatever prompt the caller seeded (last-saved on the node,
       // or empty for a fresh gen). Storyboard→video overrides this below
       // with the locked motion template.
       let initialPrompt = openDialog.prompt;
-      const openNode = nodes.find((n) => n.id === rfId);
+      const openNode = persistedNode;
       const openNodeType = openNode?.data.type ?? "image";
       if (openNodeType === "video") {
         const sb = useBoardStore
@@ -439,11 +543,11 @@ export function GenerationDialog() {
           )
           .find((n) => n?.data.type === "Storyboard");
         if (sb) {
-          const g = normaliseStoryboardGrid(sb.data.storyboardGrid);
+          const g = normaliseStoryboardGrid(sb.data.generation?.storyboardGrid);
           initialPrompt = buildStoryboardVideoPrompt(g);
         }
       }
-      setPrompt(initialPrompt);
+      setPrompt(typeof savedForm.prompt === "string" ? savedForm.prompt : initialPrompt);
       // Character → always 1:1 portrait headshot (its own opinionated
       // default; ignores upstream aspect because character is the source).
       // Image / video → match upstream aspect when available; fall back to
@@ -466,33 +570,44 @@ export function GenerationDialog() {
           nextAspect = "IMAGE_ASPECT_RATIO_LANDSCAPE";
         }
       }
-      setAspectRatio(nextAspect);
-      setVariants(1);
-      setCamera("static");
+      const validAspects = [...IMAGE_ASPECT_RATIOS, ...VIDEO_ASPECT_RATIOS].map((item) => item.key);
+      setAspectRatio(
+        typeof savedForm.aspectRatio === "string" && validAspects.includes(savedForm.aspectRatio as AspectKey)
+          ? savedForm.aspectRatio as AspectKey
+          : nextAspect,
+      );
+      setVariants(
+        typeof savedForm.variants === "number" && Number.isFinite(savedForm.variants)
+          ? Math.max(1, Math.min(4, Math.round(savedForm.variants)))
+          : 1,
+      );
+      setCamera(savedForm.camera === "dynamic" ? "dynamic" : "static");
       // Hydrate storyboard grid from existing node data when reopening.
       // Fresh nodes + legacy values ("3x3" from 1.2.15-1.2.18) → "2x2".
       const openNodeData = useBoardStore
         .getState()
         .nodes.find((n) => n.id === rfId)?.data;
-      setStoryboardGrid(normaliseStoryboardGrid(openNodeData?.storyboardGrid));
+      setStoryboardGrid(
+        normaliseStoryboardGrid(savedForm.storyboardGrid),
+      );
       
-      const initCharGender = (openNodeData?.charGender as GenderKey) || null;
-      const initCharCountry = (openNodeData?.charCountry as CountryKey) || null;
-      const initCharVibe = (openNodeData?.charVibe as VibeKey) || "clean";
-      const initCharExtras = (openNodeData?.charExtras as string) || "";
+      const initCharGender = savedForm.charGender ?? (openNodeData?.generation?.charGender as GenderKey) ?? null;
+      const initCharCountry = savedForm.charCountry ?? (openNodeData?.generation?.charCountry as CountryKey) ?? null;
+      const initCharVibe = savedForm.charVibe ?? (openNodeData?.generation?.charVibe as VibeKey) ?? "clean";
+      const initCharExtras = savedForm.charExtras ?? (openNodeData?.generation?.charExtras as string) ?? "";
       
       setCharGender(initCharGender);
       setCharCountry(initCharCountry);
       setCharVibe(initCharVibe);
       setCharExtras(initCharExtras);
       
-      if (openNodeType === "character" && !initialPrompt) {
+      if (openNodeType === "character" && !initialPrompt && typeof savedForm.prompt !== "string") {
         setPrompt(buildCharacterPrompt(initCharGender, initCharCountry, initCharVibe, initCharExtras));
       }
       setAutoBuilding(false);
       setAutoPromptUsed(false);
-      setT2vLibraryMediaId(null);
-      setT2vLibraryMediaItem(null);
+      setT2vLibraryMediaId(savedForm.t2vLibraryMediaId ?? null);
+      setT2vLibraryMediaItem(savedForm.t2vLibraryMediaItem ?? null);
       // Default-select every upstream source variant for video targets so
       // the user just hits Generate when they want all videos.
       const upstreamEdge = useBoardStore
@@ -504,12 +619,23 @@ export function GenerationDialog() {
       const ups =
         upstreamNode?.data.mediaIds ??
         (upstreamNode?.data.mediaId ? [upstreamNode.data.mediaId] : []);
-      setSelectedSourceIdx(new Set(ups.map((_, i) => i)));
+      const restoredSourceIdx = Array.isArray(savedForm.selectedSourceIdx)
+        ? savedForm.selectedSourceIdx.filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < ups.length)
+        : ups.map((_, i) => i);
+      setSelectedSourceIdx(new Set(restoredSourceIdx));
       
-      setIndependentVideoMediaIds((openNodeData?.independentMediaIds as string[]) || []);
-      setIndependentVideoMode((openNodeData?.independentVideoMode as "i2v" | "r2v") || "i2v");
-      setConnectedVideoMode((openNodeData?.connectedVideoMode as "i2v" | "r2v") || "i2v");
-      setR2vAdditionalMediaIds((openNodeData?.r2vAdditionalMediaIds as string[]) || []);
+      setIndependentVideoMediaIds(
+        savedForm.independentVideoMediaIds ?? [],
+      );
+      setIndependentVideoMode(
+        savedForm.independentVideoMode ?? "i2v",
+      );
+      setConnectedVideoMode(
+        savedForm.connectedVideoMode ?? "i2v",
+      );
+      setR2vAdditionalMediaIds(
+        savedForm.r2vAdditionalMediaIds ?? [],
+      );
       
       triggerRef.current = document.activeElement;
       // Focus textarea on open
@@ -521,7 +647,108 @@ export function GenerationDialog() {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rfId]);
+  }, [rfId, boardId, boardPublicId]);
+
+  // Keep the node settings synchronized so closing the dialog or reloading the page does
+  // not discard any prompt, setting, or source selection.
+  useEffect(() => {
+    if (rfId === null) return;
+    const key = `${boardPublicId ?? "default"}:${rfId}`;
+    if (skipInitialFormSave.current === key) {
+      skipInitialFormSave.current = null;
+      return;
+    }
+    const draft: GenerationFormState = {
+      prompt,
+      aspectRatio,
+      variants,
+      camera,
+      storyboardGrid,
+      charGender,
+      charCountry,
+      charVibe,
+      charExtras,
+      selectedSourceIdx: [...selectedSourceIdx],
+      t2vLibraryMediaId,
+      t2vLibraryMediaItem,
+      independentVideoMediaIds,
+      independentVideoMode,
+      connectedVideoMode,
+      r2vAdditionalMediaIds,
+      backend: mediaProvider,
+      imageModel,
+      videoModel: videoModelFamily,
+      videoQuality,
+      omniFlashDuration,
+      omniFlashResolution,
+    };
+    const videoModel = draft.videoModel === "omni_flash"
+      ? { family: "omni_flash", id: `abra_r2v_${draft.omniFlashDuration}s${draft.omniFlashResolution === "360p" ? "_360p" : ""}` }
+      : { family: "veo", quality: draft.videoQuality };
+    const currentGeneration = useBoardStore.getState().nodes.find((item) => item.id === rfId)?.data.generation ?? {};
+    const isImageNode = targetType === "image" || targetType === "character" || isStoryboard;
+    const generation = {
+      ...currentGeneration,
+      prompt: draft.prompt,
+      ...(isVideo || isImageNode ? {
+        backend: draft.backend,
+        aspectRatio: draft.aspectRatio,
+        variants: draft.variants,
+        model: isVideo ? videoModel : { family: "image", id: draft.imageModel },
+      } : {}),
+      ...(isVideo ? {
+        camera: draft.camera,
+        selectedSourceIdx: draft.selectedSourceIdx,
+        t2vLibraryMediaId: draft.t2vLibraryMediaId,
+        t2vLibraryMediaItem: draft.t2vLibraryMediaItem,
+        independentVideoMediaIds: draft.independentVideoMediaIds,
+        independentVideoMode: draft.independentVideoMode,
+        connectedVideoMode: draft.connectedVideoMode,
+        videoMode: useBoardStore.getState().edges.some((edge) => edge.target === rfId)
+          ? draft.connectedVideoMode
+          : draft.independentVideoMode,
+        r2vAdditionalMediaIds: draft.r2vAdditionalMediaIds,
+        ...(draft.videoModel === "omni_flash"
+          ? { duration: draft.omniFlashDuration, resolution: draft.omniFlashResolution }
+          : { duration: null, resolution: null }),
+      } : {}),
+      ...(isCharacter ? {
+        charGender: draft.charGender,
+        charCountry: draft.charCountry,
+        charVibe: draft.charVibe,
+        charExtras: draft.charExtras,
+      } : {}),
+      ...(isStoryboard ? { storyboardGrid: draft.storyboardGrid } : {}),
+    };
+    useBoardStore.getState().updateNodeGeneration(rfId, generation);
+  }, [
+    rfId,
+    boardId,
+    boardPublicId,
+    prompt,
+    aspectRatio,
+    variants,
+    camera,
+    storyboardGrid,
+    charGender,
+    charCountry,
+    charVibe,
+    charExtras,
+    selectedSourceIdx,
+    t2vLibraryMediaId,
+    t2vLibraryMediaItem,
+    independentVideoMediaIds,
+    independentVideoMode,
+    connectedVideoMode,
+    r2vAdditionalMediaIds,
+    mediaProvider,
+    imageModel,
+    videoModelFamily,
+    videoQuality,
+    omniFlashDuration,
+    omniFlashResolution,
+    isVideo,
+  ]);
 
   // Keyboard handling
   useEffect(() => {
@@ -642,16 +869,10 @@ export function GenerationDialog() {
       );
       // Persist the chosen grid + topic on the node so reload shows
       // the same settings and `StoryboardBody` can render the grid badge.
-      useBoardStore.getState().updateNodeData(rfId, {
-        storyboardGrid,
-        aiBrief: prompt,
-      });
+      useBoardStore.getState().updateNodeGeneration(rfId, { prompt, storyboardGrid });
+      useBoardStore.getState().updateNodeData(rfId, { aiBrief: prompt });
       const dbId = parseInt(rfId, 10);
-      if (!isNaN(dbId)) {
-        patchNode(dbId, {
-          data: { storyboardGrid, aiBrief: prompt },
-        }).catch(() => {});
-      }
+      if (!isNaN(dbId)) patchNode(dbId, { data: { aiBrief: prompt } }).catch(() => {});
       dispatchGeneration(rfId, {
         prompt: wrapped,
         aspectRatio,
@@ -667,20 +888,13 @@ export function GenerationDialog() {
       // No auto-synth, no image/video dispatch. Downstream image/video
       // nodes pick up this prompt as upstream context at their own
       // dispatch time.
-      const dbId = parseInt(rfId, 10);
-      if (isNaN(dbId)) {
-        closeGenerationDialog();
-        return;
-      }
       const finalPrompt = prompt;
+      useBoardStore.getState().updateNodeGeneration(rfId, { prompt: finalPrompt });
       useBoardStore.getState().updateNodeData(rfId, {
-        prompt: finalPrompt,
         status: finalPrompt.trim() ? "done" : "idle",
       });
-      patchNode(dbId, {
-        status: finalPrompt.trim() ? "done" : "idle",
-        data: { prompt: finalPrompt },
-      }).catch(() => {});
+      const dbId = parseInt(rfId, 10);
+      if (!isNaN(dbId)) patchNode(dbId, { status: finalPrompt.trim() ? "done" : "idle" }).catch(() => {});
       closeGenerationDialog();
       return;
     }
@@ -693,18 +907,9 @@ export function GenerationDialog() {
       // baked into the prompt text), so we persist them here at dispatch
       // time. patchNode merges, so this fires alongside the generation
       // store's own status patches without colliding.
-      const charStamp: Record<string, unknown> = {};
-      if (charCountry) charStamp.charCountry = charCountry;
-      if (charVibe) charStamp.charVibe = charVibe;
-      if (charGender) charStamp.charGender = charGender;
-      if (charExtras) charStamp.charExtras = charExtras;
-      if (Object.keys(charStamp).length > 0) {
-        useBoardStore.getState().updateNodeData(rfId, charStamp);
-        const dbId = parseInt(rfId, 10);
-        if (!isNaN(dbId)) {
-          patchNode(dbId, { data: charStamp }).catch(() => {});
-        }
-      }
+      useBoardStore.getState().updateNodeGeneration(rfId, {
+        prompt: finalPrompt, charCountry, charVibe, charGender, charExtras,
+      });
       dispatchGeneration(rfId, {
         prompt: finalPrompt,
         aspectRatio,
@@ -771,31 +976,23 @@ export function GenerationDialog() {
 
       // 1. Text-to-Video (không có node nối trước) / Independent Video
       if (videoInfo?.mode === "t2v") {
-        const dbId = parseInt(rfId, 10);
         const actualMode = independentVideoMediaIds.length > 1 
           ? "r2v" 
           : independentVideoMediaIds.length === 1 
             ? independentVideoMode 
             : "t2v";
 
-        // Save selected media to node data so it's restored next time
-        useBoardStore.getState().updateNodeData(rfId, { 
-          independentMediaIds: independentVideoMediaIds,
-          independentVideoMode: independentVideoMode 
+        useBoardStore.getState().updateNodeGeneration(rfId, {
+          independentVideoMediaIds,
+          independentVideoMode,
+          videoMode: actualMode,
         });
-        if (!isNaN(dbId)) {
-          patchNode(dbId, { 
-            data: { 
-              independentMediaIds: independentVideoMediaIds,
-              independentVideoMode: independentVideoMode 
-            } 
-          }).catch(() => {});
-        }
 
         dispatchGeneration(rfId, {
           prompt: videoPrompt,
           aspectRatio,
           kind: "video",
+          cameraMode: camera,
           videoMode: actualMode,
           sourceMediaIds: independentVideoMediaIds.length > 0 ? independentVideoMediaIds : undefined,
           variantCount: variants,
@@ -806,69 +1003,47 @@ export function GenerationDialog() {
 
       // 2. Nối tiếp video (lấy frame cuối cùng của video trước)
       if (videoInfo?.mode === "video_continuation") {
-        if (!videoInfo.sourceMediaId) {
+        if (!videoInfo.sourceMediaId && !hasPendingUpstream) {
           useBoardStore.getState().updateNodeData(rfId, { extractError: "Video trước chưa có file để trích xuất frame cuối." });
           return;
         }
 
-        useBoardStore.getState().updateNodeData(rfId, { extractingFrame: true, extractError: null });
         closeGenerationDialog();
-
-        extractAndUploadLastFrame(videoInfo.sourceMediaId).then((lastFrameMediaId) => {
-          useBoardStore.getState().updateNodeData(rfId, { extractingFrame: false });
-          dispatchGeneration(rfId, {
-            prompt: videoPrompt,
-            aspectRatio,
-            kind: "video",
-            sourceMediaId: lastFrameMediaId,
-            variantCount: 1,
-          });
-        }).catch((err: any) => {
-          const msg = err?.message || "Lỗi khi trích xuất frame cuối của video";
-          useBoardStore.getState().updateNodeData(rfId, { extractingFrame: false, extractError: msg });
-          useGenerationStore.setState({
-            error: `Lỗi trích xuất frame cuối: ${msg}`,
-          });
+        useBoardStore.getState().updateNodeData(rfId, { extractingFrame: false, extractError: null });
+        dispatchGeneration(rfId, {
+          prompt: videoPrompt,
+          aspectRatio,
+          kind: "video",
+          cameraMode: camera,
+          videoMode: "i2v",
+          sourceVideoId: videoInfo.sourceMediaId,
+          variantCount: 1,
         });
         return;
       }
 
       // 3. Ảnh -> Video (i2v hoặc r2v)
       if (isEffectiveR2v) {
-        useBoardStore.getState().updateNodeData(rfId, { extractingFrame: true, extractError: null });
         closeGenerationDialog();
-
-        Promise.all(
-          refSourceNodes.map(async (r) => {
-            if (r.node.data.type === "video") {
-              if (!r.mediaId) throw new Error(`Node ${r.node.data.shortId} chưa có video để trích xuất`);
-              return await extractAndUploadLastFrame(r.mediaId);
-            }
-            return r.mediaId;
-          })
-        ).then((upstreamMids) => {
-          const finalPicked = [...upstreamMids.filter(Boolean) as string[], ...r2vAdditionalMediaIds];
-          const useMulti = finalPicked.length > 1;
-
-          const dbId = parseInt(rfId, 10);
-          useBoardStore.getState().updateNodeData(rfId, { r2vAdditionalMediaIds, extractingFrame: false });
-          if (!isNaN(dbId)) {
-            patchNode(dbId, { data: { r2vAdditionalMediaIds } }).catch(() => {});
-          }
-
-          dispatchGeneration(rfId, {
-            prompt: videoPrompt,
-            aspectRatio,
-            kind: "video",
-            videoMode: "r2v",
-            sourceMediaId: useMulti ? undefined : finalPicked[0],
-            sourceMediaIds: finalPicked,
-            variantCount: variants,
-          });
-        }).catch((err: any) => {
-          const msg = err?.message || "Lỗi khi trích xuất frame cuối từ video upstream";
-          useBoardStore.getState().updateNodeData(rfId, { extractingFrame: false, extractError: msg });
-          useGenerationStore.setState({ error: `Lỗi trích xuất frame: ${msg}` });
+        const sources = refSourceNodes.flatMap((r) => r.mediaId
+          ? [{ mediaId: r.mediaId, isVideo: r.node.data.type === "video" }]
+          : []);
+        const sourceMediaIds = [
+          ...sources.filter((source) => !source.isVideo).map((source) => source.mediaId),
+          ...r2vAdditionalMediaIds,
+        ];
+        const sourceVideoIds = sources.filter((source) => source.isVideo).map((source) => source.mediaId);
+        useBoardStore.getState().updateNodeGeneration(rfId, { r2vAdditionalMediaIds });
+        useBoardStore.getState().updateNodeData(rfId, { extractingFrame: false, extractError: null });
+        dispatchGeneration(rfId, {
+          prompt: videoPrompt,
+          aspectRatio,
+          kind: "video",
+          cameraMode: camera,
+          videoMode: "r2v",
+          sourceMediaIds,
+          sourceVideoIds,
+          variantCount: variants,
         });
         return;
       }
@@ -878,17 +1053,14 @@ export function GenerationDialog() {
       const useMulti = finalPicked.length > 1;
 
       if (videoInfo?.mode === "i2v") {
-        const dbId = parseInt(rfId, 10);
-        useBoardStore.getState().updateNodeData(rfId, { connectedVideoMode });
-        if (!isNaN(dbId)) {
-          patchNode(dbId, { data: { connectedVideoMode } }).catch(() => {});
-        }
+        useBoardStore.getState().updateNodeGeneration(rfId, { connectedVideoMode });
       }
 
       dispatchGeneration(rfId, {
         prompt: videoPrompt,
         aspectRatio,
         kind: "video",
+        cameraMode: camera,
         videoMode: actualConnectedMode as "i2v" | "r2v",
         sourceMediaId: useMulti ? undefined : finalPicked[0],
         sourceMediaIds: useMulti ? finalPicked : undefined,
@@ -929,10 +1101,12 @@ export function GenerationDialog() {
     (videoInfo?.mode === "t2v"
       ? (isOmniVideo ? independentVideoMediaIds.length > 0 : (prompt.trim().length > 0 || independentVideoMediaIds.length > 0)) && !extractingFrame
       : videoInfo?.mode === "video_continuation"
-      ? Boolean(videoInfo.sourceMediaId) &&
-        videoInfo.sourceNode?.data.status === "done" &&
+      ? (Boolean(videoInfo.sourceMediaId) || hasPendingUpstream) &&
+        (videoInfo.sourceNode?.data.status === "done" || hasPendingUpstream) &&
         !extractingFrame
-      : (isEffectiveR2v ? (refSourceNodes.length > 0 || r2vAdditionalMediaIds.length > 0) : selectedSourceIdx.size > 0) && !extractingFrame);
+      : (isEffectiveR2v
+          ? (refSourceNodes.length > 0 || r2vAdditionalMediaIds.length > 0 || hasPendingUpstream)
+          : (selectedSourceIdx.size > 0 || hasPendingUpstream)) && !extractingFrame);
 
   const canGenerate = isCharacter
     ? charGender !== null || charCountry !== null || charExtras.trim().length > 0
@@ -961,7 +1135,11 @@ export function GenerationDialog() {
             <h2 id="gen-dialog-title" className="gen-dialog__title">
               {isVideo
                 ? videoInfo?.mode === "t2v"
-                  ? "Tạo video từ Text (t2v)"
+                  ? independentVideoEffectiveMode === "t2v"
+                    ? "Tạo video từ Text (t2v)"
+                    : independentVideoEffectiveMode === "i2v"
+                      ? "Tạo video từ Ảnh (i2v)"
+                      : "Tạo video từ Ingredients (r2v)"
                   : videoInfo?.mode === "video_continuation"
                   ? "Nối tiếp video (Frame cuối)"
                   : "Tạo video từ Ảnh (i2v)"
@@ -976,8 +1154,8 @@ export function GenerationDialog() {
             <span className="gen-dialog__subtitle">
               Node #{node?.data.shortId ?? rfId}
               {isVideo && videoInfo && (
-                <span className={`gen-dialog__mode-badge gen-dialog__mode-badge--${videoInfo.mode}`}>
-                  {videoInfo.label}
+                <span className={`gen-dialog__mode-badge gen-dialog__mode-badge--${videoInfo.mode === "t2v" ? independentVideoEffectiveMode : videoInfo.mode}`}>
+                  {videoInfo.mode === "t2v" ? independentVideoModeLabel : videoInfo.label}
                 </span>
               )}
             </span>
@@ -992,8 +1170,7 @@ export function GenerationDialog() {
         </div>
 
         {/* Prompt */}
-        {true && (
-          <div className="gen-dialog__field">
+        <div className="gen-dialog__field">
             <div className="gen-dialog__label-row">
               <label className="gen-dialog__label" htmlFor="gen-prompt">
                 {isVideo ? "Motion prompt" : "Prompt"}
@@ -1018,7 +1195,11 @@ export function GenerationDialog() {
               placeholder={
                 isVideo
                   ? videoInfo?.mode === "t2v"
-                    ? "Nhập mô tả video cần tạo (Text to Video)…"
+                    ? independentVideoEffectiveMode === "t2v"
+                      ? "Nhập mô tả video cần tạo (Text to Video)…"
+                      : independentVideoEffectiveMode === "i2v"
+                        ? "Bỏ trống để tự sinh motion prompt từ source image ✨ hoặc nhập prompt…"
+                        : "Bỏ trống để tự sinh motion prompt từ các source images ✨ hoặc nhập prompt…"
                     : videoInfo?.mode === "video_continuation"
                     ? "Nhập mô tả diễn biến tiếp theo sau frame cuối của video trước…"
                     : "Bỏ trống để tự sinh motion prompt từ source image ✨ hoặc nhập prompt…"
@@ -1060,8 +1241,7 @@ export function GenerationDialog() {
                   : "✨ Đang dựng prompt từ upstream context…"}
               </p>
             )}
-          </div>
-        )}
+        </div>
 
         {/* Character builder (character node only) */}
         {isCharacter && (
@@ -1151,7 +1331,7 @@ export function GenerationDialog() {
                     <select
                       className="source-select-mini"
                       value={independentVideoMode}
-                      onChange={(e) => setIndependentVideoMode(e.target.value as "i2v" | "r2v")}
+                      onChange={(e) => persistIndependentVideoMode(e.target.value as "i2v" | "r2v")}
                       disabled={isWorking}
                       style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fff', border: 'none' }}
                     >
@@ -1168,12 +1348,13 @@ export function GenerationDialog() {
                 <div style={{ marginTop: 10 }}>
                   <MediaPicker
                     kind="image"
+                    workspaceId={boardPublicId}
                     multi={true}
                     value={independentVideoMediaIds}
                     disabled={isWorking}
                     onChange={(ids) => {
                       const newIds = Array.isArray(ids) ? ids : (ids ? [ids] : []);
-                      setIndependentVideoMediaIds(newIds);
+                      persistIndependentVideoSelection(newIds);
                     }}
                   />
                 </div>
@@ -1462,6 +1643,7 @@ export function GenerationDialog() {
               {isEffectiveR2v && (
                 <MediaPicker
                   kind="image"
+                  workspaceId={boardPublicId}
                   multi={true}
                   value={r2vAdditionalMediaIds}
                   disabled={isWorking}
@@ -1527,10 +1709,71 @@ export function GenerationDialog() {
           </div>
         )}
 
+        {/* Model picker comes first so selecting Omni reveals its options
+            directly below. */}
+        {isVideo && (
+          <div className="gen-dialog__field">
+            <span className="gen-dialog__label">
+              Model
+              <InfoTip tip="Sticky — selection được lưu cho các lần dispatch sau (đồng bộ với Settings). Veo dùng i2v (1 source image); Omni Flash dùng reference ingredients (đa ảnh)." />
+            </span>
+            <select
+              className="gen-dialog__select"
+              disabled={isWorking}
+              value={videoModelFamily === "omni_flash" ? "omni" : `veo:${videoQuality}`}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "omni") {
+                  setVideoModel("omni_flash");
+                  return;
+                }
+                const [, quality] = v.split(":") as ["veo", VideoQuality];
+                setVideoModel("veo");
+                setVideoQuality(quality);
+              }}
+            >
+              {VIDEO_MODEL_CHIPS.map((m) => {
+                if (m.kind === "omni") {
+                  return <option key="omni" value="omni">Omni Flash</option>;
+                }
+                const locked = m.ultraOnly && paygateTier !== "PAYGATE_TIER_TWO";
+                return (
+                  <option key={`veo:${m.quality}`} value={`veo:${m.quality}`} disabled={locked}>
+                    {m.label}{m.ultraOnly ? " · Ultra only" : ""}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        )}
+
+        {/* Omni Flash options are visible only while Omni is selected. */}
         {/* Omni Flash duration picker — video only, when the user's
             settings select the Omni model family. Replaces the implicit
             ~8s Veo duration with a per-dispatch radio. Credit cost is
             surfaced beside each option. */}
+        {isOmniVideo && (
+          <div className="gen-dialog__field">
+            <span className="gen-dialog__label">
+              Resolution (Omni Flash)
+              <InfoTip tip="Chọn độ phân giải cho Omni Flash. 720p cho chất lượng cao hơn; 360p có chi phí thấp hơn." />
+            </span>
+            <div className="aspect-chip-row">
+              {OMNI_FLASH_RESOLUTIONS.map((resolution) => (
+                <button
+                  key={resolution}
+                  type="button"
+                  className={`aspect-chip${omniFlashResolution === resolution ? " aspect-chip--active" : ""}`}
+                  disabled={isWorking}
+                  onClick={() => setOmniFlashResolution(resolution as OmniFlashResolution)}
+                >
+                  {resolution}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {isOmniVideo && (
           <div className="gen-dialog__field">
             <span className="gen-dialog__label">
@@ -1555,63 +1798,6 @@ export function GenerationDialog() {
                 );
               })}
             </div>
-          </div>
-        )}
-
-        {/* Model picker (video only) — mirrors the unified list from
-            SettingsPanel. Native <select> for compactness; selecting an
-            option stamps videoModel + videoQuality on the global
-            settings store so the override sticks for the next dispatch.
-            Encode option `value` as "veo:<quality>" or "omni" so the
-            change handler can split it back into the two store fields. */}
-        {isVideo && (
-          <div className="gen-dialog__field">
-            <span className="gen-dialog__label">
-              Model
-              <InfoTip tip="Sticky — selection được lưu cho các lần dispatch sau (đồng bộ với Settings). Veo dùng i2v (1 source image); Omni Flash dùng reference ingredients (đa ảnh) với duration 4/6/8/10s chọn ở dưới." />
-            </span>
-            <select
-              className="gen-dialog__select"
-              disabled={isWorking}
-              value={
-                (() => {
-                  return videoModelFamily === "omni_flash"
-                    ? "omni"
-                    : `veo:${videoQuality}`;
-                })()
-              }
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v === "omni") {
-                  setVideoModel("omni_flash");
-                  return;
-                }
-                const [, quality] = v.split(":") as ["veo", VideoQuality];
-                setVideoModel("veo");
-                setVideoQuality(quality);
-              }}
-            >
-              {VIDEO_MODEL_CHIPS.map((m) => {
-                if (m.kind === "omni") {
-                  return (
-                    <option key="omni" value="omni">
-                      Omni Flash
-                    </option>
-                  );
-                }
-                const locked = m.ultraOnly && paygateTier !== "PAYGATE_TIER_TWO";
-                return (
-                  <option
-                    key={`veo:${m.quality}`}
-                    value={`veo:${m.quality}`}
-                    disabled={locked}
-                  >
-                    {m.label}
-                    {m.ultraOnly ? " · Ultra only" : ""}
-                  </option>
-                );
-              })}
-            </select>
           </div>
         )}
 

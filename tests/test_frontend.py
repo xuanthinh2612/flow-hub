@@ -45,3 +45,42 @@ def test_react_frontend_served(tmp_path):
     assert "workers" in data
     assert "job_counts" in data
 
+
+def test_canvas_sqlite_crud_and_node_patch(tmp_path):
+    config = Config(
+        host="127.0.0.1",
+        port=8787,
+        data_dir=tmp_path / "canvas-data",
+        worker_token="test-token",
+        api_key="test-key",
+        auth="off",
+    )
+    app = flowhub.main.create_app(config)
+    client = TestClient(app)
+    try:
+        board = client.post("/api/boards", json={"name": "Canvas"}).json()
+        source = client.post("/api/nodes", json={
+            "board_id": board["id"], "type": "image", "x": 10, "y": 20,
+            "data": {"title": "Source"},
+        }).json()
+        target = client.post("/api/nodes", json={
+            "board_id": board["id"], "type": "video", "x": 30, "y": 40,
+            "data": {"title": "Target"},
+        }).json()
+
+        patched = client.patch(f"/api/nodes/{source['id']}", json={
+            "status": "done", "data": {"mediaId": "MEDIA-1"},
+        })
+        assert patched.status_code == 200
+        assert patched.json()["data"]["mediaId"] == "MEDIA-1"
+
+        edge = client.post("/api/edges", json={
+            "board_id": board["id"], "source_id": source["id"], "target_id": target["id"],
+        })
+        assert edge.status_code == 201
+        detail = client.get(f"/api/boards/{board['id']}").json()
+        assert detail["nodes"][0]["data"]["mediaId"] == "MEDIA-1"
+        assert len(detail["edges"]) == 1
+    finally:
+        app.state.core.db._conn.close()
+

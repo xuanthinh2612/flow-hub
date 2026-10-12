@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { getMediaItem } from "../api/client";
+import type { MediaItem } from "../api/types";
 import { useGenerationStore } from "../store/generation";
 import { useBoardStore } from "../store/board";
-import { useSettingsStore } from "../store/settings";
-import { useReferencesStore } from "../store/references";
-import { getMediaStatus, mediaUrl, type MediaStatus } from "../canvas/dummyApi";
-import { countryLabel, vibeLabel } from "../constants/character";
+import { getMediaStatus, mediaUrl, type MediaStatus } from "../canvas/canvasApi";
+import { vibeLabel } from "../constants/character";
 
 const ICON: Record<string, string> = {
   character: "◎",
@@ -41,6 +41,7 @@ const VIDEO_QUALITY_LABELS: Record<string, string> = {
  *  card. Returns "—" when the value is missing or unrecognised so the
  *  metadata grid never displays a stale hardcoded fallback. */
 function formatAspectRatio(value: string | undefined): string {
+  if (value && /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/.test(value)) return value;
   switch (value) {
     case "IMAGE_ASPECT_RATIO_LANDSCAPE":
     case "VIDEO_ASPECT_RATIO_LANDSCAPE":
@@ -51,7 +52,7 @@ function formatAspectRatio(value: string | undefined): string {
     case "IMAGE_ASPECT_RATIO_SQUARE":
       return "1:1";
     default:
-      return "—";
+      return "";
   }
 }
 
@@ -59,9 +60,9 @@ function formatAspectRatio(value: string | undefined): string {
  *  "vừa xong", "5 phút trước", "2 giờ trước", "3 ngày trước". Falls
  *  back to "—" when the timestamp is missing or unparseable. */
 function formatRelativeTime(iso: string | undefined): string {
-  if (!iso) return "—";
+  if (!iso) return "";
   const t = new Date(iso).getTime();
-  if (isNaN(t)) return "—";
+  if (isNaN(t)) return "";
   const diffSec = Math.max(0, (Date.now() - t) / 1000);
   if (diffSec < 60) return "vừa xong";
   const diffMin = Math.floor(diffSec / 60);
@@ -73,6 +74,29 @@ function formatRelativeTime(iso: string | undefined): string {
   return new Date(t).toLocaleDateString("vi-VN");
 }
 
+function formatFileSize(size: number | undefined): string {
+  if (typeof size !== "number" || !Number.isFinite(size) || size < 0) return "";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatModel(value: string | undefined): string {
+  if (!value) return "";
+  const omni = value.match(/^abra_(?:r2v|t2v|i2v)_(\d+)s(?:_(360p))?$/);
+  if (omni) return `Omni Flash · ${omni[1]}s${omni[2] ? " · 360p" : ""}`;
+  return IMAGE_MODEL_LABELS[value] ?? VIDEO_QUALITY_LABELS[value] ?? value;
+}
+
+function formatResolution(media: MediaItem | null, dimensions: string): string {
+  const explicit = (media as (MediaItem & { resolution?: string }) | null)?.resolution;
+  if (explicit) return explicit;
+  const model = media?.model ?? "";
+  if (model.includes("_360p")) return "360p";
+  if (/^abra_(?:r2v|t2v|i2v)_\d+s$/.test(model)) return "720p";
+  return dimensions;
+}
+
 export function ResultViewer() {
   const openViewer = useGenerationStore((s) => s.openViewer);
   const closeResultViewer = useGenerationStore((s) => s.closeResultViewer);
@@ -81,18 +105,14 @@ export function ResultViewer() {
   const projectId = useGenerationStore((s) => s.projectId);
   const nodes = useBoardStore((s) => s.nodes);
   const edges = useBoardStore((s) => s.edges);
-  const settingsImageModel = useSettingsStore((s) => s.imageModel);
-  const settingsVideoQuality = useSettingsStore((s) => s.videoQuality);
 
   const [activeIdx, setActiveIdx] = useState(0);
   const [mediaReady, setMediaReady] = useState(false);
+  const [mediaMetadata, setMediaMetadata] = useState<MediaItem | null>(null);
+  const [mediaDimensions, setMediaDimensions] = useState("");
+  const [videoDuration, setVideoDuration] = useState("");
   const [cacheKey, setCacheKey] = useState(0);
   const [status, setStatus] = useState<MediaStatus | null>(null);
-  // Save-to-library state. MUST live above the `if (!data) return null`
-  // early-return below — React's Rules of Hooks require all hooks to be
-  // called unconditionally on every render in the same order.
-  const [savedFlash, setSavedFlash] = useState(false);
-  const [saving, setSaving] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<Element | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -102,40 +122,12 @@ export function ResultViewer() {
   const data = node?.data;
   const mediaIds = data?.mediaIds ?? (data?.mediaId ? [data.mediaId] : []);
 
-  // METADATA model label. Two tiers:
-  //   - `isBadge: true` — node was generated AFTER the model-stamp feature
-  //     shipped, so we know the exact model that produced it. Render as
-  //     a pill (matches the Settings "Ultra only" badge visual language).
-  //   - `isBadge: false` — old node, or unrenderable type (prompt/note),
-  //     or upload (no model). Render as plain text so the visual
-  //     difference signals "estimate vs ground truth".
+  // Prefer metadata attached to the actual media item. Node metadata is a
+  // fallback for older records that predate media-level model stamping.
   const metadataModel: { label: string; isBadge: boolean } = (() => {
-    if (data?.type === "video") {
-      if (data.videoQuality) {
-        return {
-          label: VIDEO_QUALITY_LABELS[data.videoQuality] ?? data.videoQuality,
-          isBadge: true,
-        };
-      }
-      // Pre-feature node — fall back to the user's current preference.
-      return {
-        label: VIDEO_QUALITY_LABELS[settingsVideoQuality] ?? settingsVideoQuality,
-        isBadge: false,
-      };
-    }
-    if (data && ["image", "character", "visual_asset"].includes(data.type)) {
-      if (data.imageModel) {
-        return {
-          label: IMAGE_MODEL_LABELS[data.imageModel] ?? data.imageModel,
-          isBadge: true,
-        };
-      }
-      return {
-        label: IMAGE_MODEL_LABELS[settingsImageModel] ?? settingsImageModel,
-        isBadge: false,
-      };
-    }
-    return { label: "—", isBadge: false };
+    const configuredModel = data?.generation?.model as { id?: string; quality?: string } | undefined;
+    const rawModel = mediaMetadata?.model || configuredModel?.id || configuredModel?.quality;
+    return { label: formatModel(rawModel), isBadge: Boolean(rawModel) };
   })();
 
   // Upstream refs feeding this target. Walk EDGES (not just nodes) so
@@ -195,7 +187,7 @@ export function ResultViewer() {
         .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     : [];
 
-  const independentMediaIds = (data?.independentMediaIds as string[]) || [];
+  const independentMediaIds = (data?.generation?.independentVideoMediaIds as string[]) || [];
   independentMediaIds.forEach((mid, idx) => {
     refSourceNodes.push({
       key: `indep-${mid}-${idx}`,
@@ -206,7 +198,7 @@ export function ResultViewer() {
     });
   });
 
-  const r2vAdditionalMediaIds = (data?.r2vAdditionalMediaIds as string[]) || [];
+  const r2vAdditionalMediaIds = (data?.generation?.r2vAdditionalMediaIds as string[]) || [];
   r2vAdditionalMediaIds.forEach((mid, idx) => {
     refSourceNodes.push({
       key: `r2v-add-${mid}-${idx}`,
@@ -258,10 +250,28 @@ export function ResultViewer() {
   useEffect(() => {
     setMediaReady(false);
     setStatus(null);
+    setMediaMetadata(null);
+    setMediaDimensions("");
+    setVideoDuration("");
     if (pollTimerRef.current !== null) {
       clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
     }
+  }, [currentMediaId]);
+
+  useEffect(() => {
+    if (!currentMediaId) return;
+    let active = true;
+    getMediaItem(currentMediaId)
+      .then((item) => {
+        if (active) setMediaMetadata(item);
+      })
+      .catch(() => {
+        if (active) setMediaMetadata(null);
+      });
+    return () => {
+      active = false;
+    };
   }, [currentMediaId]);
 
   // Keyboard handling
@@ -318,6 +328,16 @@ export function ResultViewer() {
 
   const isVideo = data.type === "video";
   const shortMediaId = currentMediaId ? `${currentMediaId.slice(0, 12)}…` : "pending";
+  const configuredModel = data.generation?.model as { id?: string; quality?: string } | undefined;
+  const mediaModel = mediaMetadata?.model || configuredModel?.id || configuredModel?.quality;
+  const modelDuration = mediaModel?.match(/_(\d+)s(?:_|$)/)?.[1];
+  const storedDuration = (mediaMetadata as (MediaItem & { duration?: number }) | null)?.duration;
+  const durationValue = isVideo
+    ? (videoDuration || (typeof storedDuration === "number" ? `${storedDuration}s` : modelDuration ? `${modelDuration}s` : ""))
+    : "";
+  const aspectValue = formatAspectRatio(mediaMetadata?.aspect) || formatAspectRatio(data.aspectRatio as string | undefined);
+  const resolutionValue = formatResolution(mediaMetadata, mediaDimensions);
+  const mediaKind = mediaMetadata?.kind ?? (isVideo ? "video" : "image");
 
   const cacheBust = cacheKey > 0 ? `?t=${cacheKey}` : "";
 
@@ -327,6 +347,24 @@ export function ResultViewer() {
       clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
     }
+  }
+
+  function onVideoLoaded(video: HTMLVideoElement) {
+    const duration = Number.isFinite(video.duration) && video.duration > 0
+      ? `${Math.round(video.duration * 10) / 10}s`
+      : "";
+    setVideoDuration(duration);
+    if (video.videoWidth > 0 && video.videoHeight > 0) {
+      setMediaDimensions(`${video.videoWidth} × ${video.videoHeight} px`);
+    }
+    onImgLoad();
+  }
+
+  function onImageLoaded(image: HTMLImageElement) {
+    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+      setMediaDimensions(`${image.naturalWidth} × ${image.naturalHeight} px`);
+    }
+    onImgLoad();
   }
 
   function onImgError() {
@@ -379,12 +417,8 @@ export function ResultViewer() {
     // original generation. Without this we silently snap to LANDSCAPE / 1
     // variant — wrong for portrait/square shots, character refs (square),
     // and multi-variant batches.
-    const aspectRatio =
-      typeof data.aspectRatio === "string" ? data.aspectRatio : undefined;
-    const variantCount =
-      typeof data.variantCount === "number" && data.variantCount > 0
-        ? data.variantCount
-        : 1;
+    const aspectRatio = data.generation?.aspectRatio;
+    const variantCount = data.generation?.variants ?? 1;
 
     // Critical: video nodes must dispatch with `kind: "video"` AND the
     // upstream source(s). Without `kind`, the store falls back to
@@ -410,7 +444,7 @@ export function ResultViewer() {
       }
       const useMulti = sourceMediaIds.length > 1;
       dispatchGeneration(rfId, {
-        prompt: data.prompt ?? "",
+        prompt: data.generation?.prompt ?? "",
         kind: "video",
         sourceMediaId: useMulti ? undefined : sourceMediaIds[0],
         sourceMediaIds: useMulti ? sourceMediaIds : undefined,
@@ -420,7 +454,7 @@ export function ResultViewer() {
       return;
     }
     dispatchGeneration(rfId, {
-      prompt: data.prompt ?? "",
+      prompt: data.generation?.prompt ?? "",
       aspectRatio,
       variantCount,
     });
@@ -429,7 +463,7 @@ export function ResultViewer() {
   function handleEditPrompt() {
     if (!rfId || !data || llmBusy) return;
     closeResultViewer();
-    openGenerationDialog(rfId, data.prompt ?? "");
+    openGenerationDialog(rfId, data.generation?.prompt ?? "");
   }
 
   async function handleNewVariant() {
@@ -442,47 +476,7 @@ export function ResultViewer() {
     // Open the gen dialog on the fresh sibling so the user can hit
     // Generate immediately (or tweak prompt first) — that's the natural
     // next step after cloning.
-    openGenerationDialog(newRfId, data?.prompt ?? "");
-  }
-
-  // Save the currently-viewed variant to the cross-board Reference
-  // library. Backend POST is idempotent on media_id, so multi-clicking
-  // is safe — we still flip the button to "Saved" for 1.5s for feedback.
-  // (State declared at the top of the component to satisfy Rules of Hooks.)
-
-  async function handleSaveToLibrary() {
-    if (!rfId || !data || !currentMediaId || saving) return;
-    setSaving(true);
-    try {
-      const kind: "image" | "character" | "visual_asset" | "storyboard_shot" =
-        data.type === "Storyboard"
-          ? "storyboard_shot"
-          : data.type === "character"
-            ? "character"
-            : data.type === "visual_asset"
-              ? "visual_asset"
-              : "image";
-      await useReferencesStore.getState().save({
-        media_id: currentMediaId,
-        kind,
-        ai_brief: typeof data.aiBrief === "string" ? data.aiBrief : null,
-        aspect_ratio:
-          typeof data.aspectRatio === "string" ? data.aspectRatio : null,
-        label:
-          typeof data.aiBrief === "string"
-            ? data.aiBrief.slice(0, 80)
-            : `#${data.shortId}`,
-        source_board_id: useBoardStore.getState().boardId,
-        source_node_short_id:
-          typeof data.shortId === "string" ? data.shortId : null,
-      });
-      setSavedFlash(true);
-      setTimeout(() => setSavedFlash(false), 1500);
-    } catch {
-      // Surfaced via store.error
-    } finally {
-      setSaving(false);
-    }
+    openGenerationDialog(newRfId, data?.generation?.prompt ?? "");
   }
 
   return (
@@ -519,7 +513,7 @@ export function ResultViewer() {
                     controls
                     preload="metadata"
                     onError={onImgError}
-                    onLoadedData={onImgLoad}
+                    onLoadedData={(e) => onVideoLoaded(e.currentTarget)}
                   />
                 ) : (
                   <img
@@ -528,7 +522,7 @@ export function ResultViewer() {
                     src={mediaUrl(currentMediaId) + cacheBust}
                     alt={data.title as string}
                     onError={onImgError}
-                    onLoad={onImgLoad}
+                    onLoad={(e) => onImageLoaded(e.currentTarget)}
                   />
                 )}
                 {!mediaReady && (
@@ -617,7 +611,7 @@ export function ResultViewer() {
           <hr className="result-viewer__divider" />
 
           <span className="result-viewer__section-label">PROMPT</span>
-          <p className="result-viewer__prompt">{data.prompt ?? "(no prompt)"}</p>
+          <p className="result-viewer__prompt">{data.generation?.prompt ?? "(no prompt)"}</p>
           <button
             className="result-viewer__edit-prompt"
             onClick={handleEditPrompt}
@@ -678,6 +672,10 @@ export function ResultViewer() {
 
           <span className="result-viewer__section-label">METADATA</span>
           <dl className="result-viewer__metadata-grid">
+            <dt>media id</dt>
+            <dd title={currentMediaId ?? ""}>{currentMediaId ?? ""}</dd>
+            <dt>type</dt>
+            <dd>{mediaKind}</dd>
             <dt>model</dt>
             <dd>
               {metadataModel.isBadge ? (
@@ -686,26 +684,30 @@ export function ResultViewer() {
                 metadataModel.label
               )}
             </dd>
-            {data?.type === "character" && countryLabel(data.charCountry) && (
-              <>
-                <dt>country</dt>
-                <dd>
-                  <span className="model-badge">{countryLabel(data.charCountry)}</span>
-                </dd>
-              </>
-            )}
-            {data?.type === "character" && vibeLabel(data.charVibe) && (
-              <>
-                <dt>vibe</dt>
-                <dd>
-                  <span className="model-badge">{vibeLabel(data.charVibe)}</span>
-                </dd>
-              </>
-            )}
+            <dt>resolution</dt>
+            <dd>{resolutionValue}</dd>
+            <dt>duration</dt>
+            <dd>{durationValue}</dd>
             <dt>aspect</dt>
-            <dd>{formatAspectRatio(data?.aspectRatio)}</dd>
-            <dt>time</dt>
-            <dd>{formatRelativeTime(data?.renderedAt)}</dd>
+            <dd>{aspectValue}</dd>
+            <dt>format</dt>
+            <dd>{mediaMetadata?.mime ?? ""}</dd>
+            <dt>size</dt>
+            <dd>{formatFileSize(mediaMetadata?.size)}</dd>
+            <dt>source</dt>
+            <dd>{mediaMetadata?.source ?? ""}</dd>
+            <dt>job id</dt>
+            <dd title={mediaMetadata?.job_id ?? ""}>{mediaMetadata?.job_id ?? ""}</dd>
+            <dt>variant</dt>
+            <dd>{mediaIds.length > 0 ? `${activeIdx + 1} / ${mediaIds.length}` : ""}</dd>
+            <dt>created</dt>
+            <dd>
+              {typeof mediaMetadata?.created_at === "number"
+                ? formatRelativeTime(new Date(mediaMetadata.created_at * 1000).toISOString())
+                : ""}
+            </dd>
+            <dt>vibe</dt>
+            <dd>{data.type === "character" ? vibeLabel(data.generation?.charVibe as string | undefined) ?? "" : ""}</dd>
           </dl>
 
           <div className="result-viewer__actions">
@@ -738,21 +740,6 @@ export function ResultViewer() {
               }
             >
               New variant +
-            </button>
-            <button
-              className={
-                "result-viewer__btn result-viewer__btn--save"
-                + (savedFlash ? " result-viewer__btn--saved" : "")
-              }
-              onClick={handleSaveToLibrary}
-              disabled={!currentMediaId || saving}
-              title={
-                !currentMediaId
-                  ? "Wait for the generation to finish"
-                  : "Save this variant to the cross-board Reference library"
-              }
-            >
-              {savedFlash ? "★ Saved" : saving ? "…" : "★ Save to library"}
             </button>
             {projectId ? (
               <a

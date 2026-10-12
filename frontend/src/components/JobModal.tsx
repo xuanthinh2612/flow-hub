@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { JobItem, RpcLogEntry } from '../api/types';
-import { api, mediaFile } from '../api/client';
+import { api } from '../api/client';
 import { useToast } from '../context/ToastContext';
 import { useModal } from '../context/ModalContext';
-import { ago, typeLabel, fmt, innerOf, STATUS_LABEL } from '../utils/format';
+import { ago, fmt, innerOf, STATUS_LABEL } from '../utils/format';
 import { reuseSpec } from '../utils/storage';
 import { useNavigate } from 'react-router-dom';
 import { MediaModalContent } from './MediaModal';

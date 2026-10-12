@@ -1788,39 +1788,6 @@ button:disabled {
   background: var(--accent);
 }
 
-/* "★" overlay — reference-library save button. Sits TOP-LEFT to avoid
-   overlapping the "Use →" pill which is top-right. Both buttons share
-   the same hover-reveal pattern; they never collide visually. */
-.thumbnail-tile__save-btn {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  font-size: 13px;
-  line-height: 1;
-  opacity: 0;
-  transition: opacity 80ms linear, background 80ms linear, color 80ms linear;
-  z-index: 2;
-}
-.thumbnail-tile:hover .thumbnail-tile__save-btn,
-.thumbnail-tile:focus-within .thumbnail-tile__save-btn,
-.thumbnail-tile__save-btn:focus-visible {
-  opacity: 1;
-}
-.thumbnail-tile__save-btn:hover {
-  background: var(--accent, #7c5cff);
-  border-color: var(--accent, #7c5cff);
-  color: #ffd54a;
-}
-
 /* Inline picker — shown below the tile grid when the upstream has 2+
    downstream targets and the user clicks "Use →" on a variant. Lists
    each target so the user picks which downstream this variant feeds. */
@@ -3088,7 +3055,9 @@ button:disabled {
 }
 
 .node-card:hover .node-header__actions,
-.node-header__actions:has(.node-header__btn--running) {
+.node-header__actions:has(.node-header__btn--running),
+.node-header__actions:has(.node-header__btn--cancel),
+.node-header__actions:has(.node-header__btn--resume) {
   opacity: 1;
   pointer-events: auto;
 }
@@ -3119,6 +3088,26 @@ button:disabled {
 .node-header__btn--running {
   color: var(--accent);
   opacity: 1;
+}
+
+.node-header__btn--cancel {
+  color: var(--danger, #ef4444);
+  opacity: 1;
+}
+
+.node-header__btn--cancel:hover {
+  color: #fff;
+  background: var(--danger, #ef4444);
+}
+
+.node-header__btn--resume {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.node-header__btn--resume:hover {
+  color: var(--text);
+  background: var(--panel-high);
 }
 
 /* ── Generation Dialog ───────────────────────────────────────────────────── */
@@ -3730,23 +3719,6 @@ button:disabled {
 .result-viewer__btn--link {
   background: var(--panel-high);
   color: var(--text);
-}
-
-/* "★ Save to library" — distinct gold border so the user spots it in the
-   action stack (the other action buttons are all neutral grey). */
-.result-viewer__btn--save {
-  border-color: rgba(255, 213, 74, 0.55);
-  color: #ffd54a;
-}
-.result-viewer__btn--save:hover:not(:disabled) {
-  background: rgba(255, 213, 74, 0.12);
-  border-color: #ffd54a;
-}
-.result-viewer__btn--saved,
-.result-viewer__btn--saved:hover {
-  background: #ffd54a;
-  color: #1a1a1a;
-  border-color: #ffd54a;
 }
 
 /* Footer hint */

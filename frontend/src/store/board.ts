@@ -1,5 +1,7 @@
 import { create } from "zustand";
-import type { Edge, Node } from "@xyflow/react";
+import type { Edge, Node, Viewport } from "@xyflow/react";
+import { cancelPendingNodeGeneration, writeNodeGeneration } from "../utils/nodeGenerationSettings";
+import { useSettingsStore } from "./settings";
 import {
   listBoards,
   createBoard,
@@ -10,10 +12,12 @@ import {
   patchNode,
   deleteNode,
   createEdge,
+  patchEdge,
   deleteEdge,
   type Board,
   type NodeType,
-} from "./dummyBoardApi";
+  type StoredEdge,
+} from "./boardApi";
 
 export type { NodeType };
 
@@ -28,12 +32,39 @@ export type NodeStatus = "idle" | "queued" | "running" | "done" | "error";
 // frontend/src/lib/storyboardPrompt.ts.
 export type StoryboardGrid = "2x2" | "2x3" | "2x4";
 
+export interface NodeGeneration extends Record<string, unknown> {
+  backend?: "flow" | "muse";
+  aspectRatio?: string;
+  model?: { id?: string; family: string; quality?: string };
+  resolution?: string | null;
+  duration?: number | null;
+  camera?: "static" | "dynamic";
+  videoMode?: "t2v" | "i2v" | "r2v";
+  operation?: string;
+  prompts?: string[];
+  prompt?: string;
+  variants?: number;
+  storyboardGrid?: StoryboardGrid;
+  charCountry?: string | null;
+  charGender?: string | null;
+  charVibe?: string;
+  charExtras?: string;
+  selectedSourceIdx?: number[];
+  independentVideoMediaIds?: string[];
+  independentVideoMode?: "i2v" | "r2v";
+  connectedVideoMode?: "i2v" | "r2v";
+  r2vAdditionalMediaIds?: string[];
+  t2vLibraryMediaId?: string | null;
+  t2vLibraryMediaItem?: unknown;
+  t2vSourceId?: string;
+}
+
 export interface FlowboardNodeData extends Record<string, unknown> {
   type: NodeType;
   shortId: string;
   title: string;
   status?: NodeStatus;
-  prompt?: string;
+  generation?: NodeGeneration;
   thumbnailUrl?: string;
   mediaId?: string;
   // Per-variant media ids in dispatch order. `null` entries are
@@ -83,9 +114,6 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   // panel can show "Country / Vibe / Gender" pills under METADATA. Keys
   // (`vn`, `clean`, `female`) match the constants in
   // `src/constants/character.ts`; viewer maps key → display label.
-  charCountry?: string;
-  charVibe?: string;
-  charGender?: string;
   error?: string;
   // Storyboard layout. The Storyboard node is now a thin image-node
   // wrapper that generates a single composite using a locked prompt
@@ -93,10 +121,155 @@ export interface FlowboardNodeData extends Record<string, unknown> {
   // arranged in a NxN layout (N rows, N columns)`. Default `3x3` when
   // missing (true for fresh nodes + legacy pre-1.2.15 nodes whose
   // multi-shot data is now ignored).
-  storyboardGrid?: StoryboardGrid;
 }
 
 export type FlowNode = Node<FlowboardNodeData>;
+
+const isDatabaseId = (id: string) => /^\d+$/.test(id);
+
+function defaultNodeGeneration(type: NodeType): NodeGeneration | undefined {
+  const settings = useSettingsStore.getState();
+  if (type === "video") {
+    const model = settings.videoModel === "omni_flash"
+      ? {
+          family: "omni_flash",
+          id: `abra_r2v_${settings.omniFlashDuration}s${settings.omniFlashResolution === "360p" ? "_360p" : ""}`,
+        }
+      : { family: "veo", quality: settings.videoQuality };
+    return {
+      backend: settings.mediaProvider,
+      aspectRatio: "VIDEO_ASPECT_RATIO_LANDSCAPE",
+      model,
+      ...(settings.videoModel === "omni_flash"
+        ? { duration: settings.omniFlashDuration, resolution: settings.omniFlashResolution }
+        : {}),
+      camera: "static",
+      prompt: "",
+      variants: 1,
+      videoMode: "t2v",
+    };
+  }
+  if (["image", "character", "visual_asset", "Storyboard"].includes(type)) {
+    return {
+      backend: settings.mediaProvider,
+      aspectRatio: type === "character" ? "IMAGE_ASPECT_RATIO_SQUARE" : "IMAGE_ASPECT_RATIO_LANDSCAPE",
+      model: { family: "image", id: settings.imageModel },
+      prompt: "",
+      variants: 1,
+      ...(type === "character" ? { charGender: null, charCountry: null, charVibe: "clean", charExtras: "" } : {}),
+      ...(type === "Storyboard" ? { storyboardGrid: "2x2" } : {}),
+    };
+  }
+  return undefined;
+}
+
+const OBSOLETE_GENERATION_KEYS = [
+  "generationConfig", "generationDraft", "prompt", "charCountry", "charVibe", "charGender", "charExtras",
+  "storyboardGrid", "independentMediaIds", "independentVideoMode", "connectedVideoMode",
+  "r2vAdditionalMediaIds", "t2vSourceId",
+] as const;
+
+function migrateNodeGeneration(type: NodeType, data: Record<string, unknown>): NodeGeneration {
+  const draft = data.generationDraft && typeof data.generationDraft === "object"
+    ? data.generationDraft as Record<string, unknown>
+    : {};
+  const previous = data.generationConfig && typeof data.generationConfig === "object"
+    ? data.generationConfig as Record<string, unknown>
+    : {};
+  const defaults = defaultNodeGeneration(type) ?? {};
+  const previousModel = previous.model && typeof previous.model === "object"
+    ? previous.model as Record<string, unknown>
+    : {};
+  const isVideo = type === "video";
+  const videoFamily = draft.videoModel === "omni_flash" || previousModel.family === "omni_flash"
+    ? "omni_flash"
+    : "veo";
+  const isImageGenerator = ["image", "character", "Storyboard"].includes(type);
+  const imageModelId = typeof draft.imageModel === "string"
+    ? draft.imageModel
+    : typeof previousModel.id === "string" && previousModel.family === "image"
+      ? previousModel.id
+      : (defaults.model as NodeGeneration["model"])?.id;
+  const duration = draft.omniFlashDuration ?? previous.duration ?? defaults.duration;
+  const resolution = draft.omniFlashResolution ?? previous.resolution ?? defaults.resolution;
+  const quality = draft.videoQuality ?? previousModel.quality ?? (defaults.model as NodeGeneration["model"])?.quality;
+  const model = isVideo
+    ? videoFamily === "omni_flash"
+      ? {
+          family: "omni_flash",
+          id: `abra_r2v_${Number(duration ?? 8)}s${String(resolution ?? "720p") === "360p" ? "_360p" : ""}`,
+        }
+      : { family: "veo", ...(typeof quality === "string" ? { quality } : {}) }
+    : isImageGenerator ? { family: "image", ...(typeof imageModelId === "string" ? { id: imageModelId } : {}) } : undefined;
+  const videoMode = draft.connectedVideoMode ?? draft.independentVideoMode
+    ?? data.connectedVideoMode ?? data.independentVideoMode ?? previous.videoMode ?? defaults.videoMode;
+  return {
+    ...defaults,
+    ...previous,
+    prompt: typeof draft.prompt === "string" ? draft.prompt : typeof data.prompt === "string" ? data.prompt : "",
+    backend: (draft.backend ?? previous.backend ?? defaults.backend) as NodeGeneration["backend"],
+    aspectRatio: String(draft.aspectRatio ?? previous.aspectRatio ?? defaults.aspectRatio ?? (isVideo ? "VIDEO_ASPECT_RATIO_LANDSCAPE" : "IMAGE_ASPECT_RATIO_LANDSCAPE")),
+    ...(model ? { model } : {}),
+    ...(isVideo && videoFamily === "omni_flash" ? { duration: Number(duration ?? 8), resolution: String(resolution ?? "720p") } : { duration: null, resolution: null }),
+    camera: (draft.camera ?? previous.camera ?? "static") as NodeGeneration["camera"],
+    ...(typeof videoMode === "string" ? { videoMode: videoMode as NodeGeneration["videoMode"] } : {}),
+    variants: Number(draft.variants ?? data.variantCount ?? 1),
+    ...(Array.isArray(previous.prompts) || Array.isArray(draft.prompts) ? { prompts: (draft.prompts ?? previous.prompts) as string[] } : {}),
+    charGender: (draft.charGender ?? data.charGender ?? null) as string | null,
+    charCountry: (draft.charCountry ?? data.charCountry ?? null) as string | null,
+    charVibe: String(draft.charVibe ?? data.charVibe ?? (type === "character" ? "clean" : "")),
+    charExtras: String(draft.charExtras ?? data.charExtras ?? ""),
+    storyboardGrid: (draft.storyboardGrid ?? data.storyboardGrid ?? (type === "Storyboard" ? "2x2" : undefined)) as StoryboardGrid | undefined,
+    selectedSourceIdx: Array.isArray(draft.selectedSourceIdx) ? draft.selectedSourceIdx as number[] : [],
+    independentVideoMediaIds: (draft.independentVideoMediaIds ?? data.independentMediaIds ?? []) as string[],
+    independentVideoMode: (draft.independentVideoMode ?? data.independentVideoMode ?? "i2v") as "i2v" | "r2v",
+    connectedVideoMode: (draft.connectedVideoMode ?? data.connectedVideoMode ?? "i2v") as "i2v" | "r2v",
+    r2vAdditionalMediaIds: (draft.r2vAdditionalMediaIds ?? data.r2vAdditionalMediaIds ?? []) as string[],
+    t2vLibraryMediaId: (draft.t2vLibraryMediaId ?? null) as string | null,
+    t2vLibraryMediaItem: draft.t2vLibraryMediaItem,
+    t2vSourceId: typeof data.t2vSourceId === "string" ? data.t2vSourceId : undefined,
+  };
+}
+
+async function mapStoredCanvasNodes(rows: Array<{ id: number; type: NodeType; x: number; y: number; short_id: string; status: NodeStatus; data: Record<string, unknown> }>): Promise<FlowNode[]> {
+  const migrations: Array<{ id: number; data: Record<string, unknown> }> = [];
+  const nodes = rows.map((row) => {
+    const existingGeneration = row.data.generation;
+    const needsMigration = !existingGeneration || typeof existingGeneration !== "object";
+    const generation = needsMigration ? migrateNodeGeneration(row.type, row.data) : existingGeneration as NodeGeneration;
+    const data = { ...row.data, generation };
+    if (needsMigration) {
+      const cleanup = Object.fromEntries(OBSOLETE_GENERATION_KEYS.map((key) => [key, null]));
+      migrations.push({ id: row.id, data: { ...cleanup, generation } });
+    }
+    return {
+      id: String(row.id),
+      type: row.type,
+      position: { x: row.x, y: row.y },
+      data: {
+        ...data,
+        type: row.type,
+        shortId: row.short_id,
+        title: (row.data.title as string | undefined) ?? TYPE_TITLE[row.type],
+        status: row.status,
+      },
+    };
+  });
+  for (let index = 0; index < migrations.length; index += 8) {
+    const batch = migrations.slice(index, index + 8);
+    await Promise.all(batch.map(({ id, data }) => patchNode(id, { data }).catch((error) => {
+      console.warn(`Could not migrate node ${id} to canonical generation settings`, error);
+    })));
+  }
+  return nodes;
+}
+
+function mergeProjectDraft(
+  mappedNodes: FlowNode[],
+  storedEdges: StoredEdge[],
+): { nodes: FlowNode[]; edges: Edge[] } {
+  return { nodes: mappedNodes, edges: storedEdges.map(edgeFromDto) };
+}
 
 // Per-edge data we attach to ReactFlow's `Edge.data` so dispatch and
 // edge-rendering paths can read it without a round-trip through the
@@ -143,17 +316,6 @@ async function resumeActiveGenerations(boardId: number): Promise<void> {
 }
 
 // ── Tiny per-node debounce (no external deps) ─────────────────────────────
-const positionTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-function debouncePosition(rfId: string, fn: () => void, delay = 150) {
-  const existing = positionTimers.get(rfId);
-  if (existing !== undefined) clearTimeout(existing);
-  positionTimers.set(rfId, setTimeout(() => {
-    positionTimers.delete(rfId);
-    fn();
-  }, delay));
-}
-
 // ── Type-to-title lookup ───────────────────────────────────────────────────
 const TYPE_TITLE: Record<NodeType, string> = {
   character: "Character",
@@ -170,6 +332,7 @@ const TYPE_TITLE: Record<NodeType, string> = {
 // Survives page reloads so refreshing on project #4 doesn't kick the user
 // back to project #1. localStorage is fine here — single-user, single-host.
 const ACTIVE_BOARD_KEY = "flowboard.activeBoardId";
+const ACTIVE_PROJECT_KEY = "flowboard.activeProjectId";
 
 function loadPersistedBoardId(): number | null {
   try {
@@ -191,10 +354,19 @@ function persistBoardId(id: number | null): void {
   }
 }
 
+function persistProjectId(id: string | null): void {
+  try {
+    if (id === null) localStorage.removeItem(ACTIVE_PROJECT_KEY);
+    else localStorage.setItem(ACTIVE_PROJECT_KEY, id);
+  } catch { /* Storage disabled / quota exceeded — non-fatal. */ }
+}
+
 // ── Store ──────────────────────────────────────────────────────────────────
 interface BoardState {
   boardId: number | null;
+  boardPublicId: string | null;
   boardName: string;
+  viewport: Viewport | null;
   // Lightweight summary list rendered by the ProjectSidebar — full node /
   // edge content lives only on the active board to keep memory bounded.
   boards: Board[];
@@ -203,10 +375,11 @@ interface BoardState {
   loading: boolean;
   error: string | null;
 
-  loadInitialBoard(): Promise<void>;
+  loadInitialBoard(requestedId?: number): Promise<void>;
   refreshBoardState(): Promise<void>;
   refreshBoardList(): Promise<void>;
   renameBoard(name: string): Promise<void>;
+  persistViewport(viewport: Viewport): Promise<void>;
   // Switch the active board: load detail, replace nodes/edges, reset
   // poll-state on the generation store.
   switchBoard(id: number): Promise<void>;
@@ -220,6 +393,7 @@ interface BoardState {
   // Callers that need to wire up an edge immediately (e.g. drop-popover
   // shortcut) need the id back synchronously.
   addNodeOfType(type: NodeType, position: { x: number; y: number }): Promise<string | null>;
+  promoteNodeForGeneration(rfId: string): Promise<string | null>;
   // Spawn a brand-new visual_asset node from a saved Reference. Used by
   // both the panel click-to-spawn path and the canvas drop-to-spawn path.
   // The new node lands with status="done" + mediaId + aiBrief already
@@ -247,6 +421,7 @@ interface BoardState {
   cloneNodeWithUpstream(rfId: string): Promise<string | null>;
 
   updateNodeData(rfId: string, partial: Partial<FlowboardNodeData>): void;
+  updateNodeGeneration(rfId: string, partial: NodeGeneration): void;
   /** Merge `partial` into edge.data — used to refresh the local cache
    * after a PATCH /api/edges/{id} so the badge updates without waiting
    * for a full board refresh. */
@@ -258,77 +433,59 @@ interface BoardState {
 
 export const useBoardStore = create<BoardState>((set, get) => ({
   boardId: null,
+  boardPublicId: null,
   boardName: "",
+  viewport: null,
   boards: [],
   nodes: [],
   edges: [],
   loading: false,
   error: null,
 
-  async loadInitialBoard() {
-    set({ loading: true, error: null });
+  async loadInitialBoard(requestedId) {
+    const changingWorkspace = requestedId !== undefined && get().boardId !== requestedId;
+    set({ loading: true, error: null, ...(changingWorkspace ? { boardId: null, boardPublicId: null, boardName: "", viewport: null, nodes: [], edges: [] } : {}) });
+    if (changingWorkspace) {
+      void import("./generation").then(({ useGenerationStore }) => {
+        useGenerationStore.getState().closeGenerationDialog();
+        useGenerationStore.getState().closeResultViewer();
+        useGenerationStore.setState({ projectId: null });
+      });
+    }
     try {
-      let boards = await listBoards();
+      const boards = await listBoards();
+      if (requestedId !== undefined && !boards.some((b: any) => b.id === requestedId)) {
+        set({ loading: false, boards, boardId: null, boardPublicId: null, viewport: null, nodes: [], edges: [] });
+        return;
+      }
       // Prefer the user's last-active board if it still exists; fall back
       // to the first board in the list. Without this, refresh always
       // snapped back to boards[0] regardless of what was selected before.
       const persistedId = loadPersistedBoardId();
-      let board =
-        (persistedId !== null && boards.find((b: any) => b.id === persistedId)) ||
-        boards[0];
+      let board = (requestedId !== undefined && boards.find((b: any) => b.id === requestedId)) ||
+        (persistedId !== null && boards.find((b: any) => b.id === persistedId)) || boards[0];
       if (!board) {
-        board = await createBoard("Untitled");
-        boards = [board];
+        set({ loading: false, boards, boardId: null, boardPublicId: null, viewport: null, nodes: [], edges: [] });
+        return;
       }
       const detail = await getBoard(board.id);
 
-      const nodes: FlowNode[] = detail.nodes.map((n: any) => ({
-        id: String(n.id),
-        type: n.type,
-        position: { x: n.x, y: n.y },
-        data: {
-          type: n.type,
-          shortId: n.short_id,
-          title: (n.data["title"] as string | undefined) ?? TYPE_TITLE[n.type as NodeType],
-          status: n.status,
-          prompt: n.data["prompt"] as string | undefined,
-          thumbnailUrl: n.data["thumbnailUrl"] as string | undefined,
-          mediaId: n.data["mediaId"] as string | undefined,
-          mediaIds: n.data["mediaIds"] as (string | null)[] | undefined,
-          slotErrors: n.data["slotErrors"] as (string | null)[] | undefined,
-          variantCount: n.data["variantCount"] as number | undefined,
-          aspectRatio: n.data["aspectRatio"] as string | undefined,
-          aiBrief: n.data["aiBrief"] as string | undefined,
-          imageModel: n.data["imageModel"] as string | undefined,
-          videoQuality: n.data["videoQuality"] as string | undefined,
-          charCountry: n.data["charCountry"] as string | undefined,
-          charVibe: n.data["charVibe"] as string | undefined,
-          charGender: n.data["charGender"] as string | undefined,
-          storyboardGrid: n.data["storyboardGrid"] as StoryboardGrid | undefined,
-          // The worker persists the partial-failure summary onto the
-          // node now, so a cold load has to read it back — otherwise a
-          // batch where some variants were blocked reloads looking
-          // clean. refreshBoardState already mapped it; these two did not.
-          error: n.data["error"] as string | undefined,
-          independentMediaIds: n.data["independentMediaIds"] as string[] | undefined,
-          independentVideoMode: n.data["independentVideoMode"] as string | undefined,
-          connectedVideoMode: n.data["connectedVideoMode"] as string | undefined,
-          r2vAdditionalMediaIds: n.data["r2vAdditionalMediaIds"] as string[] | undefined,
-          t2vSourceId: n.data["t2vSourceId"] as string | undefined,
-        },
-      }));
+      const mappedNodes = await mapStoredCanvasNodes(detail.nodes as any);
 
-      const edges: Edge[] = detail.edges.map(edgeFromDto);
+      const { nodes, edges } = mergeProjectDraft(mappedNodes, detail.edges);
 
       set({
         boardId: detail.board.id,
+        boardPublicId: detail.board.public_id,
         boardName: detail.board.name,
+        viewport: detail.board.viewport ?? null,
         boards,
         nodes,
         edges,
         loading: false,
       });
       persistBoardId(detail.board.id);
+      persistProjectId(detail.board.public_id);
       // `ensureProjectId` resolves per board but caches globally, so without
       // this a board change would dispatch under the previous board's project.
       // Harmless while every board shares one Flow project, which is all Flow
@@ -357,52 +514,19 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const detail = await getBoard(id);
-      const nodes: FlowNode[] = detail.nodes.map((n: any) => ({
-        id: String(n.id),
-        type: n.type,
-        position: { x: n.x, y: n.y },
-        data: {
-          type: n.type,
-          shortId: n.short_id,
-          title: (n.data["title"] as string | undefined) ?? TYPE_TITLE[n.type as NodeType],
-          status: n.status,
-          prompt: n.data["prompt"] as string | undefined,
-          thumbnailUrl: n.data["thumbnailUrl"] as string | undefined,
-          mediaId: n.data["mediaId"] as string | undefined,
-          mediaIds: n.data["mediaIds"] as (string | null)[] | undefined,
-          slotErrors: n.data["slotErrors"] as (string | null)[] | undefined,
-          variantCount: n.data["variantCount"] as number | undefined,
-          aspectRatio: n.data["aspectRatio"] as string | undefined,
-          aiBrief: n.data["aiBrief"] as string | undefined,
-          imageModel: n.data["imageModel"] as string | undefined,
-          videoQuality: n.data["videoQuality"] as string | undefined,
-          charCountry: n.data["charCountry"] as string | undefined,
-          charVibe: n.data["charVibe"] as string | undefined,
-          charGender: n.data["charGender"] as string | undefined,
-          storyboardGrid: n.data["storyboardGrid"] as StoryboardGrid | undefined,
-          // The worker persists the partial-failure summary onto the
-          // node now, so a cold load has to read it back — otherwise a
-          // batch where some variants were blocked reloads looking
-          // clean. refreshBoardState already mapped it; these two did not.
-          error: n.data["error"] as string | undefined,
-          
-          // Video generation specific properties
-          independentMediaIds: n.data["independentMediaIds"] as string[] | undefined,
-          independentVideoMode: n.data["independentVideoMode"] as string | undefined,
-          connectedVideoMode: n.data["connectedVideoMode"] as string | undefined,
-          r2vAdditionalMediaIds: n.data["r2vAdditionalMediaIds"] as string[] | undefined,
-          t2vSourceId: n.data["t2vSourceId"] as string | undefined,
-        },
-      }));
-      const edges: Edge[] = detail.edges.map(edgeFromDto);
+      const mappedNodes = await mapStoredCanvasNodes(detail.nodes as any);
+      const { nodes, edges } = mergeProjectDraft(mappedNodes, detail.edges);
       set({
         boardId: detail.board.id,
+        boardPublicId: detail.board.public_id,
         boardName: detail.board.name,
+        viewport: detail.board.viewport ?? null,
         nodes,
         edges,
         loading: false,
       });
       persistBoardId(detail.board.id);
+      persistProjectId(detail.board.public_id);
       // `ensureProjectId` resolves per board but caches globally, so without
       // this a board change would dispatch under the previous board's project.
       // Harmless while every board shares one Flow project, which is all Flow
@@ -446,13 +570,9 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       if (remaining.length > 0) {
         await get().switchBoard(remaining[0].id);
       } else {
-        try {
-          const board = await createBoard("Untitled");
-          set({ boards: [board] });
-          await get().switchBoard(board.id);
-        } catch (err) {
-          set({ error: err instanceof Error ? err.message : String(err) });
-        }
+        set({ boardId: null, boardPublicId: null, boardName: "", viewport: null, nodes: [], edges: [] });
+        persistBoardId(null);
+        persistProjectId(null);
       }
     }
   },
@@ -462,37 +582,8 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     if (boardId === null) return;
     try {
       const detail = await getBoard(boardId);
-      const nodes: FlowNode[] = detail.nodes.map((n: any) => ({
-        id: String(n.id),
-        type: n.type,
-        position: { x: n.x, y: n.y },
-        data: {
-          type: n.type,
-          shortId: n.short_id,
-          title: (n.data["title"] as string | undefined) ?? TYPE_TITLE[n.type as NodeType],
-          status: n.status,
-          prompt: n.data["prompt"] as string | undefined,
-          thumbnailUrl: n.data["thumbnailUrl"] as string | undefined,
-          mediaId: n.data["mediaId"] as string | undefined,
-          mediaIds: n.data["mediaIds"] as (string | null)[] | undefined,
-          slotErrors: n.data["slotErrors"] as (string | null)[] | undefined,
-          variantCount: n.data["variantCount"] as number | undefined,
-          aiBrief: n.data["aiBrief"] as string | undefined,
-          imageModel: n.data["imageModel"] as string | undefined,
-          videoQuality: n.data["videoQuality"] as string | undefined,
-          charCountry: n.data["charCountry"] as string | undefined,
-          charVibe: n.data["charVibe"] as string | undefined,
-          charGender: n.data["charGender"] as string | undefined,
-          storyboardGrid: n.data["storyboardGrid"] as StoryboardGrid | undefined,
-          error: n.data["error"] as string | undefined,
-          independentMediaIds: n.data["independentMediaIds"] as string[] | undefined,
-          independentVideoMode: n.data["independentVideoMode"] as string | undefined,
-          connectedVideoMode: n.data["connectedVideoMode"] as string | undefined,
-          r2vAdditionalMediaIds: n.data["r2vAdditionalMediaIds"] as string[] | undefined,
-          t2vSourceId: n.data["t2vSourceId"] as string | undefined,
-        },
-      }));
-      const edges: Edge[] = detail.edges.map(edgeFromDto);
+      const mappedNodes = await mapStoredCanvasNodes(detail.nodes as any);
+      const { nodes, edges } = mergeProjectDraft(mappedNodes, detail.edges);
       set({ nodes, edges });
       // Same reason as loadInitialBoard / switchBoard: this path replaces the
       // node list wholesale from the DB, so anything in flight comes back
@@ -509,7 +600,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     const { boardId } = get();
     if (boardId === null) return;
     try {
-      const updated = await apiPatchBoard(boardId, name);
+      const updated = await apiPatchBoard(boardId, { name });
       set((s) => ({
         boardName: updated.name,
         boards: s.boards.map((b: any) =>
@@ -521,214 +612,150 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     }
   },
 
-  async addNodeOfType(type, position) {
+  async persistViewport(viewport) {
     const { boardId } = get();
-    if (boardId === null) return null;
+    if (boardId === null) return;
+    set({ viewport });
+    try { await apiPatchBoard(boardId, { viewport }); } catch { /* best effort */ }
+  },
+
+  async addNodeOfType(type, position) {
+    const { boardId, boardPublicId } = get();
+    if (boardId === null || !boardPublicId) return null;
     const title = TYPE_TITLE[type as NodeType];
+    const generation = defaultNodeGeneration(type);
     try {
       const dto = await createNode({
         board_id: boardId,
         type,
         x: Math.round(position.x),
         y: Math.round(position.y),
-        data: { title },
+        data: {
+          type,
+          shortId: "",
+          title,
+          status: "idle",
+          ...(generation ? { generation } : {}),
+        },
       });
       const node: FlowNode = {
-        id: String(dto.id),
-        type: dto.type as NodeType,
-        position: { x: dto.x, y: dto.y },
-        data: {
-          type: dto.type as NodeType,
-          shortId: dto.short_id,
-          title: (dto.data["title"] as string | undefined) ?? title,
-          status: dto.status as NodeStatus | undefined,
-        },
+        id: String(dto.id), type, position: { x: dto.x, y: dto.y },
+        data: { ...dto.data, type, shortId: dto.short_id, title, status: dto.status },
       };
       set((s) => ({ nodes: [...s.nodes, node] }));
-      return node.id;
+      return String(dto.id);
     } catch (err) {
-      // Surface to console so the next "I clicked Add but nothing
-      // appeared" report has a breadcrumb in DevTools instead of an
-      // empty canvas — a 422 here usually means the backend's NodeType
-      // literal is out of sync with the frontend's NodeType union.
-      console.error("addNodeOfType failed", { type, err });
+      set({ error: err instanceof Error ? err.message : "Could not save node" });
+      return null;
     }
-    return null;
   },
 
   async addReferenceNode(ref, position) {
-    const { boardId } = get();
-    if (boardId === null) return null;
+    const { boardId, boardPublicId } = get();
+    if (boardId === null || !boardPublicId) return null;
     const title = ref.label || "Reference";
     try {
-      const dto = await createNode({
-        board_id: boardId,
-        type: "visual_asset",
-        x: Math.round(position.x),
-        y: Math.round(position.y),
-        data: {
-          title,
-          mediaId: ref.mediaId,
-          aiBrief: ref.aiBrief ?? undefined,
-          aspectRatio: ref.aspectRatio ?? undefined,
-          status: "done",
-          renderedAt: new Date().toISOString(),
-        },
-      });
-      // Mirror addNodeOfType's local-state insertion, but propagate the
-      // rich data fields so the visual_asset body renders the thumbnail
-      // straight away (instead of falling into the empty-state CTA).
+      const data = {
+        type: "visual_asset", shortId: "", title, status: "done", mediaId: ref.mediaId,
+        aiBrief: ref.aiBrief ?? undefined, aspectRatio: ref.aspectRatio ?? undefined,
+        renderedAt: new Date().toISOString(),
+      };
+      const dto = await createNode({ board_id: boardId, type: "visual_asset", x: Math.round(position.x), y: Math.round(position.y), data });
       const node: FlowNode = {
-        id: String(dto.id),
-        type: dto.type,
-        position: { x: dto.x, y: dto.y },
-        data: {
-          type: dto.type,
-          shortId: dto.short_id,
-          title: (dto.data["title"] as string | undefined) ?? title,
-          status: "done",
-          mediaId: ref.mediaId,
-          aiBrief: ref.aiBrief ?? undefined,
-          aspectRatio: ref.aspectRatio ?? undefined,
-          renderedAt: new Date().toISOString(),
-        },
+        id: String(dto.id), type: "visual_asset", position: { x: dto.x, y: dto.y },
+        data: { ...dto.data, type: "visual_asset", shortId: dto.short_id, title, status: dto.status },
       };
       set((s) => ({ nodes: [...s.nodes, node] }));
-      return node.id;
-    } catch {
-      // surface silently for now
+      return String(dto.id);
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : "Could not save reference node" });
+      return null;
     }
-    return null;
+  },
+
+  async promoteNodeForGeneration(rfId) {
+    return isDatabaseId(rfId) ? rfId : null;
   },
 
   async persistNodePosition(rfId, position) {
-    debouncePosition(rfId, async () => {
-      const dbId = parseInt(rfId, 10);
-      if (isNaN(dbId)) return;
-      try {
-        await patchNode(dbId, { x: Math.round(position.x), y: Math.round(position.y) });
-      } catch {
-        // ignore persist failures
-      }
-    });
+    const dbId = parseInt(rfId, 10);
+    if (!Number.isSafeInteger(dbId)) return;
+    try {
+      await patchNode(dbId, { x: Math.round(position.x), y: Math.round(position.y) });
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : "Could not save node position" });
+    }
   },
 
   async deleteNodeByRfId(rfId) {
-    const dbId = parseInt(rfId, 10);
-    if (isNaN(dbId)) return;
-    // Cancel any pending debounced patch for this node (it would 404 after delete).
-    const pending = positionTimers.get(rfId);
-    if (pending !== undefined) {
-      clearTimeout(pending);
-      positionTimers.delete(rfId);
-    }
-    // Also cancel any in-flight generation poll — otherwise the poll loop
-    // keeps pinging the server about a node that no longer exists.
-    // Dynamic import to avoid a circular store dependency at module init.
+    const deletingBoardId = get().boardId;
+    const dbId = isDatabaseId(rfId) ? Number(rfId) : null;
     try {
       const { useGenerationStore } = await import("./generation");
+      if (useGenerationStore.getState().openDialog.rfId === rfId) useGenerationStore.getState().closeGenerationDialog();
       useGenerationStore.getState().cancelGeneration(rfId);
-      // Sidecar polls (vision / auto-prompt) live in a separate map,
-      // so they need their own cancel or they keep polling a node
-      // that no longer exists.
       useGenerationStore.getState().cancelSidecarPoll(rfId);
-    } catch {
-      // If the module isn't loaded yet (tree-shaken test path), ignore.
+    } catch { /* ignore when generation store isn't loaded */ }
+    if (dbId !== null) {
+      try { await deleteNode(dbId); } catch { return; }
     }
-    try {
-      await deleteNode(dbId);
-      set((s) => ({
-        nodes: s.nodes.filter((n: any) => n.id !== rfId),
-        edges: s.edges.filter((e: any) => e.source !== rfId && e.target !== rfId),
-      }));
-    } catch {
-      // ignore
-    }
+    if (deletingBoardId !== null) cancelPendingNodeGeneration(get().boardPublicId, rfId);
+    set((s) => {
+      const nodes = s.nodes.filter((node) => node.id !== rfId);
+      const edges = s.edges.filter((edge) => edge.source !== rfId && edge.target !== rfId);
+      return { nodes, edges };
+    });
   },
 
   async addEdgeFromConnection(source, target) {
     const { boardId } = get();
-    if (boardId === null) return;
-    const sourceId = parseInt(source, 10);
-    const targetId = parseInt(target, 10);
-    if (isNaN(sourceId) || isNaN(targetId)) return;
+    if (boardId === null || !get().nodes.some((node) => node.id === source) || !get().nodes.some((node) => node.id === target)) return;
+    if (!isDatabaseId(source) || !isDatabaseId(target)) return;
     try {
-      const dto = await createEdge({ board_id: boardId, source_id: sourceId, target_id: targetId });
+      const dto = await createEdge({ board_id: boardId, source_id: Number(source), target_id: Number(target) });
       set((s) => ({ edges: [...s.edges, edgeFromDto(dto)] }));
-    } catch {
-      // ignore
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : "Could not save connection" });
     }
   },
 
   async cloneNodeWithUpstream(rfId) {
     const { boardId, nodes, edges } = get();
     if (boardId === null) return null;
-    const src = nodes.find((n: any) => n.id === rfId);
-    if (!src) return null;
-
-    // Position the clone to the lower-right of the source so it doesn't
-    // overlap. Title gets a " (variant)" suffix if not already present so
-    // it's easy to tell apart at a glance.
-    const offset = { x: 60, y: 60 };
-    const newPos = {
-      x: Math.round(src.position.x + offset.x),
-      y: Math.round(src.position.y + offset.y),
-    };
-    const baseTitle = src.data.title ?? TYPE_TITLE[src.data.type as NodeType];
-    const newTitle = baseTitle.endsWith("(variant)")
-      ? baseTitle
-      : `${baseTitle} (variant)`;
-
-    let nodeDto;
+    const source = nodes.find((node) => node.id === rfId);
+    if (!source) return null;
+    const baseTitle = source.data.title ?? TYPE_TITLE[source.data.type as NodeType];
+    const title = baseTitle.endsWith("(variant)") ? baseTitle : `${baseTitle} (variant)`;
+    const upstream = edges.filter((edge) => edge.target === rfId);
     try {
-      nodeDto = await createNode({
+      const dto = await createNode({
         board_id: boardId,
-        type: src.data.type,
-        x: newPos.x,
-        y: newPos.y,
-        data: { title: newTitle },
+        type: source.data.type,
+        x: Math.round(source.position.x + 60),
+        y: Math.round(source.position.y + 60),
+        data: { type: source.data.type, shortId: "", title, status: "idle", ...(source.data.generation ? { generation: source.data.generation } : {}) },
       });
-    } catch {
+      const id = String(dto.id);
+      const node: FlowNode = {
+        id, type: source.data.type, position: { x: dto.x, y: dto.y },
+        data: { ...dto.data, type: source.data.type, shortId: dto.short_id, title, status: dto.status },
+      };
+      const clonedEdges: Edge[] = [];
+      for (const edge of upstream) {
+        if (!isDatabaseId(edge.source)) continue;
+        const saved = await createEdge({ board_id: boardId, source_id: Number(edge.source), target_id: dto.id });
+        const sourceVariantIdx = edge.data?.sourceVariantIdx;
+        if (typeof sourceVariantIdx === "number" || sourceVariantIdx === null) {
+          await patchEdge(saved.id, { source_variant_idx: sourceVariantIdx });
+        }
+        clonedEdges.push(edgeFromDto({ ...saved, source_variant_idx: typeof sourceVariantIdx === "number" || sourceVariantIdx === null ? sourceVariantIdx : null }));
+      }
+      set((s) => ({ nodes: [...s.nodes, node], edges: [...s.edges, ...clonedEdges] }));
+      return id;
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : "Could not clone node" });
       return null;
     }
-
-    const newNode: FlowNode = {
-      id: String(nodeDto.id),
-      type: nodeDto.type,
-      position: { x: nodeDto.x, y: nodeDto.y },
-      data: {
-        type: nodeDto.type,
-        shortId: nodeDto.short_id,
-        title: (nodeDto.data["title"] as string | undefined) ?? newTitle,
-        status: nodeDto.status,
-      },
-    };
-    set((s) => ({ nodes: [...s.nodes, newNode] }));
-
-    // Replicate upstream edges: every (upstream → src) becomes (upstream → clone).
-    const upstreamSourceRfIds = edges
-      .filter((e: any) => e.target === rfId)
-      .map((e: any) => e.source);
-    for (const usrc of upstreamSourceRfIds) {
-      const sourceId = parseInt(usrc, 10);
-      if (isNaN(sourceId)) continue;
-      try {
-        const eDto = await createEdge({
-          board_id: boardId,
-          source_id: sourceId,
-          target_id: nodeDto.id,
-        });
-        const newEdge: Edge = {
-          id: String(eDto.id),
-          source: String(eDto.source_id),
-          target: String(eDto.target_id),
-        };
-        set((s) => ({ edges: [...s.edges, newEdge] }));
-      } catch {
-        // best-effort — partial edge replication still useful
-      }
-    }
-    return newNode.id;
   },
 
   async deleteEdgeByRfId(rfId) {
@@ -742,20 +769,45 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     }
   },
 
-  updateNodeData: (rfId, partial) =>
-    set((s) => ({
-      nodes: s.nodes.map((n: any) =>
-        n.id === rfId ? { ...n, data: { ...n.data, ...partial } } : n,
-      ),
-    })),
-  updateEdgeData: (edgeId, partial) =>
-    set((s) => ({
-      edges: s.edges.map((e: any) =>
-        e.id === edgeId
-          ? { ...e, data: { ...(e.data ?? {}), ...partial } }
-          : e,
-      ),
-    })),
+  updateNodeGeneration: (rfId, partial) => {
+    const node = get().nodes.find((item) => item.id === rfId);
+    const generation = { ...(node?.data.generation ?? {}), ...partial };
+    set((s) => ({ nodes: s.nodes.map((item) => item.id === rfId
+      ? { ...item, data: { ...item.data, generation } }
+      : item) }));
+    if (isDatabaseId(rfId)) {
+      const { boardPublicId } = get();
+      void writeNodeGeneration(boardPublicId, rfId, generation);
+    }
+  },
+  updateNodeData: (rfId, partial) => {
+    const existing = get().nodes.find((node) => node.id === rfId);
+    set((s) => {
+      const nodes = s.nodes.map((n) => n.id === rfId
+        ? { ...n, data: { ...n.data, ...partial } }
+        : n);
+      return { nodes };
+    });
+    if (existing?.data.status === "idle" && isDatabaseId(rfId)) {
+      void patchNode(Number(rfId), { data: partial }).catch((err) => {
+        set({ error: err instanceof Error ? err.message : "Could not save node draft" });
+      });
+    }
+  },
+  updateEdgeData: (edgeId, partial) => {
+    set((s) => {
+      const edges = s.edges.map((e) => e.id === edgeId
+        ? { ...e, data: { ...(e.data ?? {}), ...partial } }
+        : e);
+      return { edges };
+    });
+    const sourceVariantIdx = partial.sourceVariantIdx;
+    if (/^\d+$/.test(edgeId) && (typeof sourceVariantIdx === "number" || sourceVariantIdx === null)) {
+      void patchEdge(Number(edgeId), { source_variant_idx: sourceVariantIdx }).catch((err) => {
+        set({ error: err instanceof Error ? err.message : "Could not save edge draft" });
+      });
+    }
+  },
   setNodes: (nodes) => set({ nodes }),
   setEdges: (edges) => set({ edges }),
   clearError: () => set({ error: null }),

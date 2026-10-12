@@ -79,8 +79,8 @@ def _seed_rows() -> list[dict]:
 
     add("r2v", "veo_3_1_fast", "Veo 3.1 Fast", "veo_3_1_r2v_fast_landscape", aspect="landscape", status=_V,
         note=_OBS, sort=20)
-    add("r2v", "veo_3_1_fast", "Veo 3.1 Fast", "veo_3_1_r2v_fast_portrait", aspect="portrait",
-        note="Suy ra từ …_landscape", sort=20)
+    add("r2v", "veo_3_1_fast", "Veo 3.1 Fast", "veo_3_1_r2v_fast_portrait", aspect="portrait", status=_V,
+        note=_OBS, sort=20)
     return rows
 
 
