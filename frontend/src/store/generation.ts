@@ -9,8 +9,19 @@ import {
   stopCanvasBoard,
 } from "./boardApi";
 import { useBoardStore, type FlowboardNodeData, type NodeGeneration } from "./board";
+import {
+  CHAIN_GENERABLE_TYPES,
+  blockedByFailedUpstream,
+  chainDescendants,
+  chainTopoOrder,
+} from "./chainRules";
 import { useSettingsStore, type MediaProviderKey } from "./settings";
 import { writeNodeGenerationNow } from "../utils/nodeGenerationSettings";
+
+// The busy-node rule the header buttons read is a pure function of its
+// arguments; re-exported here so UI code has one import for the store and
+// its helpers.
+export { activeNodeIds } from "./chainRules";
 
 type PollEntry = { requestId: string | number; timerId: ReturnType<typeof setTimeout> | null };
 
@@ -52,6 +63,12 @@ interface GenerationState {
   // True while Run All / Run from Here is dispatching. Guards the buttons
   // against a second run being started on top of the first.
   runningChain: boolean;
+  // Nodes dispatched by the current chain run. Reset when a run starts and
+  // never pruned afterwards: an id that has settled no longer reads as busy,
+  // so the list only has to answer "is the chain I started still working?".
+  // That is what keeps Run All disabled for the whole run instead of only for
+  // the few hundred milliseconds the dispatch loop takes.
+  chainNodeIds: string[];
   // True while Stop All is in flight.
   stoppingBoard: boolean;
 
@@ -175,58 +192,9 @@ function collectUpstreamVideoGenerationSources(targetRfId: string): Array<{ medi
 // upstream finishes sits in `queued` and starts on its own when the upstream
 // lands, so dispatching everything up front is exactly "fill the queue".
 
-/** Node types that own a media generation. `prompt` / `note` / `merge` are
- *  structure, not work — there is nothing to run on them. */
-const CHAIN_GENERABLE_TYPES = new Set(["image", "video", "visual_asset", "character", "Storyboard"]);
-
-/** Every node reachable from `rootRfId` by following edges downstream. */
-function chainDescendants(rootRfId: string, edges: { source: string; target: string }[]): string[] {
-  const adjacency = new Map<string, string[]>();
-  for (const edge of edges) {
-    adjacency.set(edge.source, [...(adjacency.get(edge.source) ?? []), edge.target]);
-  }
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const stack = [...(adjacency.get(rootRfId) ?? [])];
-  while (stack.length) {
-    const current = stack.pop()!;
-    if (seen.has(current)) continue;
-    seen.add(current);
-    out.push(current);
-    stack.push(...(adjacency.get(current) ?? []));
-  }
-  return out;
-}
-
-/** Kahn over the induced subgraph `scopeIds`. Nodes in a cycle keep their
- *  relative order and are appended — nothing is silently dropped. */
-function chainTopoOrder(scopeIds: string[], edges: { source: string; target: string }[]): string[] {
-  const inside = new Set(scopeIds);
-  const indegree = new Map<string, number>(scopeIds.map((id) => [id, 0]));
-  const adjacency = new Map<string, string[]>(scopeIds.map((id) => [id, []]));
-  for (const edge of edges) {
-    if (inside.has(edge.source) && inside.has(edge.target) && edge.source !== edge.target) {
-      adjacency.get(edge.source)!.push(edge.target);
-      indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1);
-    }
-  }
-  const ready = scopeIds.filter((id) => (indegree.get(id) ?? 0) === 0);
-  const ordered: string[] = [];
-  while (ready.length) {
-    const current = ready.shift()!;
-    ordered.push(current);
-    for (const next of adjacency.get(current) ?? []) {
-      const left = (indegree.get(next) ?? 1) - 1;
-      indegree.set(next, left);
-      if (left === 0) ready.push(next);
-    }
-  }
-  const placed = new Set(ordered);
-  for (const id of scopeIds) {
-    if (!placed.has(id)) ordered.push(id);
-  }
-  return ordered;
-}
+// The rules themselves live in ./chainRules — a store-free module, so the
+// code the canvas runs is the code the tests run. What stays here is the part
+// that touches the stores.
 
 /**
  * Apply a backend stop report to the local store: drop the polls the backend
@@ -252,9 +220,11 @@ function applyStoppedReport(stopped: { id: number; status: string }[]): void {
 /**
  * The one way every "run the chain" button dispatches: topological order over
  * the scope, `done` skipped, one job per node, and never a duplicate for a
- * node already queued or running. A node whose upstream is in `error` stays
- * idle — Run All does not run blocked nodes, and it never writes `failed` to
- * a node that did not execute. Returns how many nodes were skipped.
+ * node already queued or running. A node blocked by a failed prerequisite
+ * stays idle — Run All does not run blocked nodes, and it never writes
+ * `failed` to a node that did not execute. Nodes with no parent are in scope
+ * on their own terms and never wait on anything. Returns how many were
+ * skipped.
  */
 async function runChain(scopeRoots: string[]): Promise<number> {
   const { nodes, edges } = useBoardStore.getState();
@@ -267,7 +237,12 @@ async function runChain(scopeRoots: string[]): Promise<number> {
   let skipped = 0;
 
   for (const rfId of ordered) {
-    const node = useBoardStore.getState().nodes.find((candidate) => candidate.id === rfId);
+    // Re-read the board every iteration: a dispatch above can change a status
+    // below it (the node goes `queued` the moment it is dispatched), and the
+    // loop must judge each node against the now, not against the snapshot it
+    // started with.
+    const board = useBoardStore.getState();
+    const node = board.nodes.find((candidate) => candidate.id === rfId);
     if (!node || !CHAIN_GENERABLE_TYPES.has(node.data.type)) continue;
     const status = node.data.status;
     // `done` is terminal here — never re-run for being inside a chain.
@@ -275,13 +250,11 @@ async function runChain(scopeRoots: string[]): Promise<number> {
     // One job per node: already in flight, or a poll already owns it.
     if (status === "queued" || status === "running") continue;
     if (useGenerationStore.getState().active[rfId] || useGenerationStore.getState().sidecar[rfId]) continue;
-    // A prerequisite in error blocks this node until it is fixed.
-    const blockedByUpstream = edges.some((edge) => {
-      if (edge.target !== rfId) return false;
-      const source = useBoardStore.getState().nodes.find((candidate) => candidate.id === edge.source);
-      return source?.data.status === "error";
-    });
-    if (blockedByUpstream) {
+    // A prerequisite that failed or was canceled blocks this node until it is
+    // retried — transitively, so a node whose parent is merely parked at
+    // `idle` because of a further-up failure is not dispatched either. It has
+    // no ancestors of its own, so a root node is never blocked by this.
+    if (blockedByFailedUpstream(rfId, board.nodes, board.edges)) {
       skipped += 1;
       continue;
     }
@@ -292,7 +265,15 @@ async function runChain(scopeRoots: string[]): Promise<number> {
       continue;
     }
     try {
-      await useGenerationStore.getState().dispatchGeneration(rfId, {
+      // Recorded before the dispatch, not after it: the node turns `queued` on
+      // the very next line, and the "is the chain still running?" check must
+      // see it from the moment it exists. A dispatch that throws leaves the id
+      // behind, which is fine — the node is `error` by then and so not busy.
+      const store = useGenerationStore.getState();
+      if (!store.chainNodeIds.includes(rfId)) {
+        useGenerationStore.setState({ chainNodeIds: [...store.chainNodeIds, rfId] });
+      }
+      await store.dispatchGeneration(rfId, {
         prompt,
         kind: node.data.type === "video" ? "video" : "image",
         aspectRatio: generation?.aspectRatio,
@@ -853,6 +834,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
   paygateTier: "PAYGATE_TIER_ONE",
   error: null,
   runningChain: false,
+  chainNodeIds: [],
   stoppingBoard: false,
 
   openGenerationDialog(rfId, prompt) {
@@ -1439,7 +1421,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
 
   async runAll() {
     if (get().runningChain) return;
-    set({ runningChain: true, error: null });
+    set({ runningChain: true, error: null, chainNodeIds: [] });
     try {
       const skipped = await runChain([]);
       if (skipped > 0) {
@@ -1452,7 +1434,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
 
   async runChainFrom(rfId) {
     if (get().runningChain) return;
-    set({ runningChain: true, error: null });
+    set({ runningChain: true, error: null, chainNodeIds: [] });
     try {
       const skipped = await runChain([rfId]);
       if (skipped > 0) {
