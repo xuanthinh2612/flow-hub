@@ -6,6 +6,7 @@ browser session for it, the worker fetches the bytes and ships them over.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import mimetypes

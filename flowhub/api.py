@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from pydantic import BaseModel, Field
 
 from .catalog import MODES
+from .canvas_project_json import CanvasProjectExportError, build_canvas_project_snapshot
 from .config import VERSION
 from .presets import build_character_prompt, presets
 from .protocol import batch as fb
@@ -159,6 +160,14 @@ async def get_canvas_board(board_id: int, request: Request):
                 canvas_node["data"]["lastRequestStatus"] = latest_request["status"]
     edges = db.all("SELECT * FROM canvas_edges WHERE board_id=? ORDER BY id", (board_id,))
     return {"board": board, "nodes": nodes, "edges": edges}
+
+
+@api.get("/boards/{board_id}/export", tags=["canvas"])
+async def export_canvas_board(board_id: int, request: Request):
+    try:
+        return await build_canvas_project_snapshot(core_of(request), board_id)
+    except CanvasProjectExportError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
 
 
 @api.patch("/boards/{board_id}", tags=["canvas"])
