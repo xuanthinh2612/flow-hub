@@ -341,6 +341,13 @@ def test_raw_rpc_and_validation(stack):
     assert c.post("/api/jobs", json={"type": "t2v"}).status_code == 400
     bad = c.post("/api/jobs", json={"type": "t2v", "prompt": "x", "family": "omni_flash", "duration": 12})
     assert bad.status_code == 400 and "không có biến thể" in bad.json()["detail"]
-    unknown = c.post("/api/jobs/preview", json={"type": "first_last", "prompt": "x", "family": "omni_flash",
-                                                "resolution": "360p", "start_media_id": "A", "end_media_id": "B"})
-    assert unknown.status_code == 400 and "360p" in unknown.json()["detail"]
+    missing = c.post("/api/jobs/preview", json={"type": "first_last", "prompt": "x", "start_media_id": "A"})
+    assert missing.status_code == 400
+    # Omni first + last 360p (nprQif, 12/10/2026): the 360p key is the 720p body, no option slot
+    ok = c.post("/api/jobs/preview", json={"type": "first_last", "prompt": "x", "family": "omni_flash",
+                                           "resolution": "360p", "start_media_id": "A", "end_media_id": "B"})
+    assert ok.status_code == 200, ok.text
+    request = ok.json()[0]["inner"][0][0]
+    assert request[1] == "omni_flash_i2v_8s_first_last_360p" and len(request) == 7
+    assert request[4] == [None, "A", None, None, None, [None, None, 1, 1]]
+    assert request[5] == [None, "B", None, None, None, [None, None, 1, 1]]

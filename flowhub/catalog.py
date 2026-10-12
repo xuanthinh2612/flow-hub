@@ -53,7 +53,7 @@ def _seed_rows() -> list[dict]:
     add("t2v", "veo_3_1_lite", "Veo 3.1 Lite", "veo_3_1_t2v_lite", status=_V,
         note=_OBS + " (16:9 và 9:16 dùng chung key)", sort=20)
     omni_seen = {("t2v", 8, "720p"), ("t2v", 8, "360p"), ("t2v", 10, "720p"), ("t2v", 10, "360p"),
-                 ("first_last", 8, "720p"), ("r2v", 6, "360p")}
+                 ("first_last", 8, "720p"), ("first_last", 8, "360p"), ("r2v", 6, "360p")}
 
     def omni(mode, key, duration, res, **kw):
         seen = (mode, duration, res) in omni_seen

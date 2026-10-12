@@ -104,7 +104,7 @@ Loại job: `image`, `character`, `edit`, `t2v`, `i2v`, `first_last`, `r2v`, `up
 `FLOWHUB_AUTH=on`; gửi header `X-API-Key`. Key in ra console lúc khởi động (hoặc đặt
 `FLOWHUB_API_KEY`). Khi mở ra mạng ngoài, đặt server sau HTTPS/WSS (reverse proxy).
 
-## Trạng thái đã kiểm chứng (07/10/2026)
+## Trạng thái đã kiểm chứng (12/10/2026)
 
 Body Flow Hub dựng **khớp từng byte** với request thật của trang (`tests/fixtures/observed_requests.json`):
 
@@ -112,13 +112,13 @@ Body Flow Hub dựng **khớp từng byte** với request thật của trang (`t
 |---|---|
 | Ảnh (ogiZ0b) | `BELUGA`, `HARBOR_SEAL`, `GEM_PIX_2` · đủ 5 tỉ lệ · 1/2/4 biến thể **trong 1 request** · ảnh tham chiếu · gắn Nhân vật (`character_id`) |
 | Text → video (YhhmEf) | `veo_3_1_t2v_fast`, `…_portrait`, `veo_3_1_t2v_lite` (chung key 2 tỉ lệ), `abra_t2v_8s/10s` (+ `_360p`) |
-| Đầu + cuối (nprQif) | `omni_flash_i2v_8s_first_last`, `veo_3_1_i2v_s_fast_fl` (16:9), `veo_3_1_interpolation_lite` · crop giữa khi tỉ lệ ảnh ≠ video |
+| Đầu + cuối (nprQif) | `omni_flash_i2v_8s_first_last` **và `…_360p`** (cùng body, key mang resolution, không có slot option như YhhmEf/MZZa6b), `veo_3_1_i2v_s_fast_fl` (16:9), `veo_3_1_interpolation_lite` · crop giữa khi tỉ lệ ảnh ≠ video |
 | Ingredients (MZZa6b) | `abra_r2v_6s_360p`, `veo_3_1_r2v_fast_landscape` |
 | Upload (maseQ) | action reCAPTCHA `UPLOAD_IMAGE` |
 
 Chưa thấy trên Flow hiện tại (*unverified* trong Models): ảnh → video (eb1hJf, cả Veo lẫn Omni),
-upscale (SPrCad), sửa ảnh, `NARWHAL`, Omni 4s/6s, key 9:16 của Veo Fast đầu + cuối, Omni đầu + cuối 360p
-(hub từ chối thay vì đoán). Tạo thử một lần trên giao diện Flow — Observation sẽ xác minh hoặc báo builder lệch.
+upscale (SPrCad), sửa ảnh, `NARWHAL`, Omni 4s/6s, key 9:16 của Veo Fast đầu + cuối. Tạo thử một
+lần trên giao diện Flow — Observation sẽ xác minh hoặc báo builder lệch.
 
 ## Lưu ý
 

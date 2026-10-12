@@ -1557,5 +1557,84 @@
     2
    ]
   ]
+ },
+ {
+  "rpcid": "nprQif",
+  "build": "boq_labs-ai-sandbox-frontend_20261007.14_p0",
+  "ts": 1791814821241,
+  "inner": [
+   [
+    [
+     [
+      null,
+      null,
+      [
+       [
+        [
+         "chàng trai bước ra khỏi quán"
+        ]
+       ]
+      ]
+     ],
+     "omni_flash_i2v_8s_first_last_360p",
+     2,
+     null,
+     [
+      null,
+      "9ed3dc01-5386-4ac3-9aec-0e0d79d73f32",
+      null,
+      null,
+      null,
+      [
+       null,
+       null,
+       1,
+       1
+      ]
+     ],
+     [
+      null,
+      "ce2f6cf6-52c5-4dad-8c57-767d537a1671",
+      null,
+      null,
+      null,
+      [
+       null,
+       null,
+       1,
+       1
+      ]
+     ],
+     [
+      null,
+      null,
+      null,
+      null,
+      "2DFDBB53-BA87-45B6-BB52-0DB2ED44D1C8",
+      "70ABA8E5-7FCF-4FB1-B3F6-A2DBC5E53FAA"
+     ]
+    ]
+   ],
+   [
+    null,
+    22,
+    null,
+    null,
+    null,
+    "9097df3e-7023-44dc-99bd-2baebe413858",
+    null,
+    null,
+    null,
+    null,
+    [
+     "__CAPTCHA__",
+     1
+    ]
+   ],
+   [
+    "F8133217-BCE9-4FDB-A000-CAB8DA4C07F8",
+    2
+   ]
+  ]
  }
 ]

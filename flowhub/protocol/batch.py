@@ -328,13 +328,10 @@ def omni_first_frame_request(prompt: str, project_id: str, source_media_id: str,
 
 def first_last_request(prompt: str, project_id: str, start_media_id: str, end_media_id: str, aspect: int,
                        model: str, start_crop: Optional[list] = None, end_crop: Optional[list] = None) -> str:
-    """First + last frame (nprQif). VERIFIED for omni_flash_i2v_8s_first_last,
-    veo_3_1_i2v_s_fast_fl and veo_3_1_interpolation_lite. A 360p Omni key's
-    extra option slot is not known yet, so such a key is refused rather than
-    sent without it."""
-    if model.endswith("_360p"):
-        raise ValueError(f"{model}: chưa biết vị trí tuỳ chọn 360p của nprQif — tạo thử 1 video đầu+cuối 360p "
-                         "trên Flow (Observation sẽ ghi lại) hoặc dùng 720p / template")
+    """First + last frame (nprQif). VERIFIED for omni_flash_i2v_8s_first_last(_360p),
+    veo_3_1_i2v_s_fast_fl and veo_3_1_interpolation_lite: the 360p Omni key is
+    exactly the 720p body — the key alone names the resolution, no option slot
+    (unlike YhhmEf / MZZa6b / eb1hJf, where a 360p key carries a trailing [4])."""
     request = [prompt_block(prompt), model, aspect, None, frame_block(start_media_id, start_crop),
                frame_block(end_media_id, end_crop), client_ids()]
     return build_envelope(RPC_GEN_VIDEO_FIRST_LAST, [[request], context(project_id), [client_uuid(), 2]])
