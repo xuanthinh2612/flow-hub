@@ -5,8 +5,8 @@ import {
   getRequest,
   listBoardRequests,
   patchNode,
-  cancelCanvasRequest,
-  resumeCanvasChain as resumeCanvasChainRequest,
+  stopCanvasChain,
+  stopCanvasBoard,
 } from "./boardApi";
 import { useBoardStore, type FlowboardNodeData, type NodeGeneration } from "./board";
 import { useSettingsStore, type MediaProviderKey } from "./settings";
@@ -34,7 +34,6 @@ const SIDECAR_TYPES = new Set<string>([
 interface GenerationState {
   active: Record<string, PollEntry>;
   canceling: Record<string, boolean>;
-  resuming: Record<string, boolean>;
   // Sidecar polls get their own ownership map, NOT a second entry in
   // `active`. The two kinds are independent concerns that can legitimately
   // run on the same node at the same time — a generation writes media, a
@@ -50,6 +49,11 @@ interface GenerationState {
   // Null until the first successful project bootstrap.
   paygateTier: "PAYGATE_TIER_ONE" | "PAYGATE_TIER_TWO" | null;
   error: string | null;
+  // True while Run All / Run from Here is dispatching. Guards the buttons
+  // against a second run being started on top of the first.
+  runningChain: boolean;
+  // True while Stop All is in flight.
+  stoppingBoard: boolean;
 
   openGenerationDialog(rfId: string, prompt: string): void;
   closeGenerationDialog(): void;
@@ -95,8 +99,19 @@ interface GenerationState {
   resumeActiveRequests(boardId: number): Promise<void>;
 
   cancelGeneration(rfId: string): void;
-  cancelCanvasGeneration(rfId: string): Promise<void>;
-  resumeCanvasChain(rfId: string): Promise<void>;
+
+  /** Stop a node and everything downstream of it (the node's ■ button). */
+  stopChain(rfId: string): Promise<void>;
+
+  /** Stop every running/queued node of the project (header Stop All). */
+  stopBoard(): Promise<void>;
+
+  /** Run the whole project: every node that can run, dependency-ordered. */
+  runAll(): Promise<void>;
+
+  /** Run from `rfId` through everything downstream, skipping `done` nodes. */
+  runChainFrom(rfId: string): Promise<void>;
+
   cancelSidecarPoll(rfId: string): void;
   clearError(): void;
 }
@@ -150,6 +165,151 @@ function collectUpstreamVideoGenerationSources(targetRfId: string): Array<{ medi
   }
   return sources;
 }
+
+// ── Chain (Run All / Run from Here) graph helpers ───────────────────────
+//
+// The same rules the backend enforces in flowhub/canvas_chain.py, applied to
+// the local store so the buttons dispatch in an order the engine already
+// accepts: upstream first, `done` never again, one job per node. The engine's
+// dependency wait loop is the queue — a downstream node dispatched before its
+// upstream finishes sits in `queued` and starts on its own when the upstream
+// lands, so dispatching everything up front is exactly "fill the queue".
+
+/** Node types that own a media generation. `prompt` / `note` / `merge` are
+ *  structure, not work — there is nothing to run on them. */
+const CHAIN_GENERABLE_TYPES = new Set(["image", "video", "visual_asset", "character", "Storyboard"]);
+
+/** Every node reachable from `rootRfId` by following edges downstream. */
+function chainDescendants(rootRfId: string, edges: { source: string; target: string }[]): string[] {
+  const adjacency = new Map<string, string[]>();
+  for (const edge of edges) {
+    adjacency.set(edge.source, [...(adjacency.get(edge.source) ?? []), edge.target]);
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const stack = [...(adjacency.get(rootRfId) ?? [])];
+  while (stack.length) {
+    const current = stack.pop()!;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    out.push(current);
+    stack.push(...(adjacency.get(current) ?? []));
+  }
+  return out;
+}
+
+/** Kahn over the induced subgraph `scopeIds`. Nodes in a cycle keep their
+ *  relative order and are appended — nothing is silently dropped. */
+function chainTopoOrder(scopeIds: string[], edges: { source: string; target: string }[]): string[] {
+  const inside = new Set(scopeIds);
+  const indegree = new Map<string, number>(scopeIds.map((id) => [id, 0]));
+  const adjacency = new Map<string, string[]>(scopeIds.map((id) => [id, []]));
+  for (const edge of edges) {
+    if (inside.has(edge.source) && inside.has(edge.target) && edge.source !== edge.target) {
+      adjacency.get(edge.source)!.push(edge.target);
+      indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1);
+    }
+  }
+  const ready = scopeIds.filter((id) => (indegree.get(id) ?? 0) === 0);
+  const ordered: string[] = [];
+  while (ready.length) {
+    const current = ready.shift()!;
+    ordered.push(current);
+    for (const next of adjacency.get(current) ?? []) {
+      const left = (indegree.get(next) ?? 1) - 1;
+      indegree.set(next, left);
+      if (left === 0) ready.push(next);
+    }
+  }
+  const placed = new Set(ordered);
+  for (const id of scopeIds) {
+    if (!placed.has(id)) ordered.push(id);
+  }
+  return ordered;
+}
+
+/**
+ * Apply a backend stop report to the local store: drop the polls the backend
+ * just stopped and leave each node in the state the backend reports. Any
+ * other status means "nothing was in flight" — the node keeps what it has.
+ */
+function applyStoppedReport(stopped: { id: number; status: string }[]): void {
+  for (const item of stopped) {
+    const nodeRfId = String(item.id);
+    useGenerationStore.getState().cancelGeneration(nodeRfId);
+    if (item.status === "idle") {
+      useBoardStore.getState().updateNodeData(nodeRfId, {
+        status: "idle", error: undefined, canceled: undefined,
+      });
+    } else if (item.status === "canceled") {
+      useBoardStore.getState().updateNodeData(nodeRfId, {
+        status: "error", error: "Đã hủy", canceled: true,
+      });
+    }
+  }
+}
+
+/**
+ * The one way every "run the chain" button dispatches: topological order over
+ * the scope, `done` skipped, one job per node, and never a duplicate for a
+ * node already queued or running. A node whose upstream is in `error` stays
+ * idle — Run All does not run blocked nodes, and it never writes `failed` to
+ * a node that did not execute. Returns how many nodes were skipped.
+ */
+async function runChain(scopeRoots: string[]): Promise<number> {
+  const { nodes, edges } = useBoardStore.getState();
+  const scope = new Set(
+    scopeRoots.length === 0
+      ? nodes.filter((node) => CHAIN_GENERABLE_TYPES.has(node.data.type)).map((node) => node.id)
+      : scopeRoots.flatMap((rootId) => [rootId, ...chainDescendants(rootId, edges)]),
+  );
+  const ordered = chainTopoOrder([...scope], edges);
+  let skipped = 0;
+
+  for (const rfId of ordered) {
+    const node = useBoardStore.getState().nodes.find((candidate) => candidate.id === rfId);
+    if (!node || !CHAIN_GENERABLE_TYPES.has(node.data.type)) continue;
+    const status = node.data.status;
+    // `done` is terminal here — never re-run for being inside a chain.
+    if (status === "done") continue;
+    // One job per node: already in flight, or a poll already owns it.
+    if (status === "queued" || status === "running") continue;
+    if (useGenerationStore.getState().active[rfId] || useGenerationStore.getState().sidecar[rfId]) continue;
+    // A prerequisite in error blocks this node until it is fixed.
+    const blockedByUpstream = edges.some((edge) => {
+      if (edge.target !== rfId) return false;
+      const source = useBoardStore.getState().nodes.find((candidate) => candidate.id === edge.source);
+      return source?.data.status === "error";
+    });
+    if (blockedByUpstream) {
+      skipped += 1;
+      continue;
+    }
+    const generation = node.data.generation;
+    const prompt = String(generation?.prompt ?? "").trim();
+    if (!prompt) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      await useGenerationStore.getState().dispatchGeneration(rfId, {
+        prompt,
+        kind: node.data.type === "video" ? "video" : "image",
+        aspectRatio: generation?.aspectRatio,
+        variantCount: generation?.variants,
+        prompts: Array.isArray(generation?.prompts) && generation.prompts.length > 0
+          ? generation.prompts
+          : undefined,
+        cameraMode: generation?.camera,
+      });
+    } catch {
+      // dispatchGeneration records the failure on the node itself; the loop
+      // keeps going so one bad node cannot stop the run.
+    }
+  }
+  return skipped;
+}
+
 
 function hasPendingUpstreamGeneration(targetRfId: string): boolean {
   const { nodes, edges } = useBoardStore.getState();
@@ -425,6 +585,32 @@ function attachPoll(rfId: string, requestId: string | number, opts: PollOpts) {
             return { active: next, error: errMsg };
           });
         } else if (req.status === "canceled") {
+          const nodeDbId = Number.parseInt(rfId, 10);
+          if (req.stopped) {
+            // The engine parked this node because its upstream died: it never
+            // executed, so it goes back to `idle` (ready to run again) rather
+            // than the canceled error state a user-initiated stop earns.
+            useBoardStore.getState().updateNodeData(rfId, {
+              status: "idle",
+              error: undefined,
+              canceled: undefined,
+              lastRequestId: String(requestId),
+              lastRequestStatus: "canceled",
+            });
+            if (!Number.isNaN(nodeDbId)) {
+              patchNode(nodeDbId, {
+                status: "idle",
+                data: {
+                  error: null,
+                  canceled: null,
+                  lastRequestId: String(requestId),
+                  lastRequestStatus: "canceled",
+                },
+              }).catch(() => {});
+            }
+            useGenerationStore.getState().cancelGeneration(rfId);
+            return;
+          }
           // Preserve cancellation as a retryable terminal state so the
           // Canvas can offer "resume chain from here" after a reload.
           useBoardStore.getState().updateNodeData(rfId, {
@@ -434,9 +620,8 @@ function attachPoll(rfId: string, requestId: string | number, opts: PollOpts) {
             lastRequestId: String(requestId),
             lastRequestStatus: "canceled",
           });
-          const canceledNodeId = Number.parseInt(rfId, 10);
-          if (!Number.isNaN(canceledNodeId)) {
-            patchNode(canceledNodeId, {
+          if (!Number.isNaN(nodeDbId)) {
+            patchNode(nodeDbId, {
               status: "error",
               data: {
                 error: "Đã hủy",
@@ -661,13 +846,14 @@ function attachSidecarPoll(rfId: string, requestId: string | number, type: Sidec
 export const useGenerationStore = create<GenerationState>((set, get) => ({
   active: {},
   canceling: {},
-  resuming: {},
   sidecar: {},
   openDialog: { rfId: null, prompt: "" },
   openViewer: { rfId: null, idx: 0 },
   projectId: null,
   paygateTier: "PAYGATE_TIER_ONE",
   error: null,
+  runningChain: false,
+  stoppingBoard: false,
 
   openGenerationDialog(rfId, prompt) {
     set({ openDialog: { rfId, prompt } });
@@ -1212,42 +1398,19 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     });
   },
 
-  async cancelCanvasGeneration(rfId) {
+  async stopChain(rfId) {
     if (get().canceling[rfId]) return;
     set((s) => ({ canceling: { ...s.canceling, [rfId]: true }, error: null }));
     try {
-      let requestId = get().active[rfId]?.requestId;
-      if (requestId === undefined) {
-        const boardId = useBoardStore.getState().boardId;
-        if (boardId === null) throw new Error("Không tìm thấy project Canvas đang mở");
-        const { items } = await listBoardRequests(boardId, { active: true });
-        const request = items.find((item) => String(item.node_id) === rfId);
-        requestId = request?.id;
+      const boardId = useBoardStore.getState().boardId;
+      const nodeId = Number.parseInt(rfId, 10);
+      if (boardId === null || Number.isNaN(nodeId)) {
+        throw new Error("Không tìm thấy project Canvas đang mở");
       }
-      if (requestId === undefined) {
-        throw new Error("Không tìm thấy generation request đang chạy trên node này");
-      }
-
-      const result = await cancelCanvasRequest(requestId);
-      if (result.status === "canceled") {
-        // Stop local polling only after the backend confirms cancellation.
-        get().cancelGeneration(rfId);
-        useBoardStore.getState().updateNodeData(rfId, {
-          status: "error",
-          error: "Đã hủy",
-          canceled: true,
-          lastRequestStatus: "canceled",
-        });
-        const nodeDbId = Number.parseInt(rfId, 10);
-        if (!Number.isNaN(nodeDbId)) {
-          await patchNode(nodeDbId, {
-            status: "error",
-            data: { error: "Đã hủy", canceled: true, lastRequestStatus: "canceled" },
-          }).catch(() => null);
-        }
-      }
+      const { stopped } = await stopCanvasChain(boardId, nodeId);
+      applyStoppedReport(stopped);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Không thể hủy generation";
+      const message = err instanceof Error ? err.message : "Không thể dừng chuỗi";
       set({ error: message });
     } finally {
       set((s) => {
@@ -1258,58 +1421,45 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     }
   },
 
-  async resumeCanvasChain(rfId) {
-    if (get().resuming[rfId]) return;
-    const node = useBoardStore.getState().nodes.find((candidate) => candidate.id === rfId);
-    const boardId = useBoardStore.getState().boardId;
-    const requestId = node?.data.lastRequestId;
-    const nodeId = Number.parseInt(rfId, 10);
-    if (boardId === null || Number.isNaN(nodeId) || typeof requestId !== "string") {
-      set({ error: "Không tìm thấy generation request để chạy lại chuỗi" });
-      return;
-    }
-
-    set((s) => ({ resuming: { ...s.resuming, [rfId]: true }, error: null }));
+  async stopBoard() {
+    if (get().stoppingBoard) return;
+    set({ stoppingBoard: true, error: null });
     try {
-      const { items } = await resumeCanvasChainRequest(boardId, nodeId, requestId);
-      for (const item of items) {
-        const targetRfId = String(item.node_id);
-        const newRequestId = String(item.id);
-        const params = item.params ?? {};
-        get().cancelGeneration(targetRfId);
-        useBoardStore.getState().updateNodeData(targetRfId, {
-          status: "queued",
-          error: undefined,
-          canceled: false,
-          lastRequestId: newRequestId,
-          lastRequestStatus: "queued",
-        });
-        const targetNodeId = Number.parseInt(targetRfId, 10);
-        if (!Number.isNaN(targetNodeId)) {
-          await patchNode(targetNodeId, {
-            status: "queued",
-            data: {
-              error: null,
-              canceled: null,
-              lastRequestId: newRequestId,
-              lastRequestStatus: "queued",
-            },
-          }).catch(() => {});
-        }
-        attachPoll(targetRfId, newRequestId, {
-          prompt: typeof params.prompt === "string" ? params.prompt : "",
-          aspectRatio: typeof params.aspect_ratio === "string" ? params.aspect_ratio : undefined,
-        });
-      }
+      const boardId = useBoardStore.getState().boardId;
+      if (boardId === null) throw new Error("Không tìm thấy project Canvas đang mở");
+      const { stopped } = await stopCanvasBoard(boardId);
+      applyStoppedReport(stopped);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Không thể chạy lại chuỗi";
+      const message = err instanceof Error ? err.message : "Không thể dừng project";
       set({ error: message });
     } finally {
-      set((s) => {
-        const next = { ...s.resuming };
-        delete next[rfId];
-        return { resuming: next };
-      });
+      set({ stoppingBoard: false });
+    }
+  },
+
+  async runAll() {
+    if (get().runningChain) return;
+    set({ runningChain: true, error: null });
+    try {
+      const skipped = await runChain([]);
+      if (skipped > 0) {
+        set({ error: `Bỏ qua ${skipped} node: thiếu prompt hoặc đang chờ node nguồn đã lỗi.` });
+      }
+    } finally {
+      set({ runningChain: false });
+    }
+  },
+
+  async runChainFrom(rfId) {
+    if (get().runningChain) return;
+    set({ runningChain: true, error: null });
+    try {
+      const skipped = await runChain([rfId]);
+      if (skipped > 0) {
+        set({ error: `Bỏ qua ${skipped} node: thiếu prompt hoặc đang chờ node nguồn đã lỗi.` });
+      }
+    } finally {
+      set({ runningChain: false });
     }
   },
 

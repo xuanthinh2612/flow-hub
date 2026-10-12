@@ -1372,10 +1372,7 @@ export function NodeCard(props: NodeProps<FlowNode>) {
   const isRunning = data.status === "running";
   const isGenerationActive = data.status === "queued" || isRunning;
   const isCanceling = useGenerationStore((state) => !!state.canceling[props.id]);
-  const isResuming = useGenerationStore((state) => !!state.resuming[props.id]);
-  const canResumeChain = data.status === "error"
-    && typeof data.lastRequestId === "string"
-    && ["failed", "timeout", "canceled"].includes(String(data.lastRequestStatus));
+  const isRunningChain = useGenerationStore((state) => state.runningChain);
   const llmBusy = isLLMBusy(data);
   const downloadable = !!data.mediaId && data.type !== "prompt" && data.type !== "note";
 
@@ -1390,12 +1387,12 @@ export function NodeCard(props: NodeProps<FlowNode>) {
 
   function handleCancelGeneration(e: React.MouseEvent) {
     e.stopPropagation();
-    void useGenerationStore.getState().cancelCanvasGeneration(props.id);
+    void useGenerationStore.getState().stopChain(props.id);
   }
 
-  function handleResumeChain(e: React.MouseEvent) {
+  function handleRunChainFrom(e: React.MouseEvent) {
     e.stopPropagation();
-    void useGenerationStore.getState().resumeCanvasChain(props.id);
+    void useGenerationStore.getState().runChainFrom(props.id);
   }
 
   function handleDownload(e: React.MouseEvent) {
@@ -1506,24 +1503,24 @@ export function NodeCard(props: NodeProps<FlowNode>) {
             <button
               className="node-header__btn node-header__btn--cancel"
               onClick={handleCancelGeneration}
-              aria-label="Cancel generation and stop downstream chain"
-              title={isCanceling ? "Đang hủy…" : "Hủy generation và dừng chuỗi phía sau"}
+              aria-label="Cancel generation and stop dependent nodes"
+              title={isCanceling ? "Đang dừng…" : "Dừng node này và các node phụ thuộc"}
               tabIndex={0}
               disabled={isCanceling}
             >
               {isCanceling ? "…" : "■"}
             </button>
           )}
-          {isGenerable && canResumeChain && (
+          {isGenerable && (
             <button
               className="node-header__btn node-header__btn--resume"
-              onClick={handleResumeChain}
-              aria-label="Resume generation chain from this node"
-              title={isResuming ? "Đang khởi động lại chuỗi…" : "Chạy lại chuỗi từ đây"}
+              onClick={handleRunChainFrom}
+              aria-label="Run from this node through its dependents"
+              title={isRunningChain ? "Đang chạy chuỗi…" : "Chạy từ node này (bỏ qua node đã xong)"}
               tabIndex={0}
-              disabled={isResuming}
+              disabled={isRunningChain}
             >
-              {isResuming ? "…" : "↻"}
+              {isRunningChain ? "…" : "↻"}
             </button>
           )}
         </div>

@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
+from . import canvas_chain
 from .catalog import MODES
 from .canvas_project_import import CanvasProjectImportError, import_canvas_project, new_public_id
 from .canvas_project_json import CanvasProjectExportError, build_canvas_project_snapshot
@@ -505,6 +506,45 @@ async def cancel_canvas_request(request_id: str, request: Request):
     return {"id": request_id, "status": job["status"]}
 
 
+def _canvas_node_or_404(db, board_id: int, node_id: int) -> dict:
+    node = db.one("SELECT id,status,data FROM canvas_nodes WHERE id=? AND board_id=?", (int(node_id), int(board_id)))
+    if not node:
+        raise HTTPException(404, "không tìm thấy node trong canvas")
+    return node
+
+
+@api.post("/boards/{board_id}/nodes/{node_id}/stop-chain", tags=["canvas"])
+async def stop_canvas_chain(board_id: int, node_id: int, request: Request):
+    """Stop one node and every node that depends on it.
+
+    Scope is the dependency graph, not the canvas layout: the node plus
+    everything reachable downstream through the edges. Upstream nodes and
+    nodes on unrelated branches are never touched. A dependent that was
+    still queued parks at `idle` (it never ran, so it is not a failure); one
+    that was already running is canceled and stays retryable.
+    """
+    core = core_of(request)
+    db = core.db
+    _canvas_node_or_404(db, board_id, node_id)
+    scope = [int(node_id), *canvas_chain.downstream_ids(db, board_id, node_id)]
+    stopped = [{"id": nid, "status": core.jobs.stop_node(nid)} for nid in scope]
+    return {"stopped": stopped}
+
+
+@api.post("/boards/{board_id}/stop-all", tags=["canvas"])
+async def stop_canvas_board(board_id: int, request: Request):
+    """Stop every running/queued node of the project (the header Stop All).
+
+    Same per-node rules as stopping a chain, applied across the whole board:
+    queued nodes park at `idle`, running ones land on the canceled state that
+    keeps their retry available. `done` and `failed` nodes are left alone.
+    """
+    core = core_of(request)
+    if not core.db.one("SELECT id FROM canvas_boards WHERE id=?", (board_id,)):
+        raise HTTPException(404, "không tìm thấy canvas")
+    return {"stopped": core.jobs.stop_board(board_id)}
+
+
 @api.post("/boards/{board_id}/nodes/{node_id}/resume-chain", tags=["canvas"])
 async def resume_canvas_chain(board_id: int, node_id: int, body: dict[str, Any], request: Request):
     """Retry a failed Canvas generation and its downstream jobs stopped by it."""
@@ -532,12 +572,18 @@ async def resume_canvas_chain(board_id: int, node_id: int, body: dict[str, Any],
     expected_request_id = str(body.get("request_id") or "")
     if not root or root["id"] != expected_request_id:
         raise HTTPException(409, "request của node đã thay đổi; hãy tải lại canvas rồi thử lại")
-    if root["status"] not in {"failed", "timeout", "canceled"}:
-        raise HTTPException(409, "chỉ có thể chạy lại chuỗi từ node đã lỗi hoặc bị hủy")
+    # Run from Here semantics: a `done` root is kept (never re-run) and only
+    # its unfinished downstream is retried; a failed/canceled root itself
+    # becomes the first member of the retry set. A root that is still running
+    # (or idle with no request) has nothing to retry here.
+    root_retried = root["status"] in {"failed", "timeout", "canceled"}
+    if root["status"] not in {"failed", "timeout", "canceled", "done"}:
+        raise HTTPException(409, "chỉ có thể chạy lại chuỗi từ node đã lỗi, bị hủy hoặc đã hoàn tất")
 
     # Follow persisted job dependencies rather than every visual edge. That
     # limits the retry to requests that actually belonged to the stopped run.
-    candidates: dict[str, dict[str, Any]] = {root["id"]: root}
+    # `done` requests are never candidates: a completed node is never re-run.
+    candidates: dict[str, dict[str, Any]] = {root["id"]: root} if root_retried else {}
     chain_request_ids = {root["id"]}
     chain_node_ids = {str(node_id)}
     changed = True
@@ -579,10 +625,11 @@ async def resume_canvas_chain(board_id: int, node_id: int, body: dict[str, Any],
                 )
 
     # Topologically order the retry set using the old request dependency IDs.
-    # Completed outputs outside the set remain untouched and are reused.
-    ordered: list[dict[str, Any]] = [root]
+    # Completed outputs outside the set remain untouched and are reused. A
+    # done root counts as a satisfied upstream without being retried itself.
+    ordered: list[dict[str, Any]] = [root] if root_retried else []
     ordered_ids = {root["id"]}
-    pending = [row for rid, row in candidates.items() if rid != root["id"]]
+    pending = [row for row in candidates.values()]
     while pending:
         ready = []
         for row in pending:
@@ -696,10 +743,16 @@ async def get_canvas_request(request_id: str, request: Request):
         status = "done"
     elif status not in ("failed", "timeout", "canceled"):
         status = "running"
+    # `stopped` distinguishes a job the engine parked because its upstream
+    # died (node goes back to `idle` — it never ran) from a generation the
+    # user canceled (node keeps its retryable error state). See
+    # JobEngine._block_chain.
+    stopped = status == "canceled" and bool((job.get("spec") or {}).get("chain_blocked"))
     return {
         "id": request_id,
         "type": record["type"],
         "status": status,
+        "stopped": stopped,
         "params": record["params"],
         "result": {
             "media_ids": [r.get("media_id") for r in (job.get("results") or [])],

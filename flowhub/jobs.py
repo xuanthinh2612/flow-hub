@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import httpx
 
+from . import canvas_chain
 from .db import DB, Settings, now
 from .media import image_aspect
 from .presets import build_character_prompt
@@ -63,6 +64,17 @@ class ResponseLost(fb.FlowError):
     def __init__(self, message: str, sent: Optional[bool]):
         super().__init__(message)
         self.sent = sent   # None: an extension older than 1.0.1 cannot tell
+
+
+class ChainStopped(fb.FlowError):
+    """A Canvas dependency stopped this job before it executed.
+
+    Raised from the dependency wait loop when an upstream node is no longer
+    able to deliver its output (failed, timeout, canceled, or its media went
+    away). The node that raised this never ran — so the caller parks it at
+    `idle` (ready to run again) rather than the `failed` state a real
+    execution error earns.
+    """
 
 
 @dataclass
@@ -410,6 +422,99 @@ class JobEngine:
         self._secrets.pop(job["id"], None)
         asyncio.create_task(self._webhook(job["id"]))
 
+    def _block_chain(self, job: dict, message: str) -> None:
+        """Park a job whose prerequisite failed before it could run.
+
+        The node never executed, so `failed` would be a lie about it — it goes
+        back to `idle` with no error, ready to be queued again by Run All /
+        Run from Here once the upstream is fixed. `chain_blocked` is the flag
+        the Canvas reads to tell this apart from a generation the user
+        canceled (which *is* an error the node keeps).
+        """
+        job["status"] = "canceled"
+        job["error"] = message[:500]
+        job["finished_at"] = now()
+        job["note"] = None
+        spec = dict(job.get("spec") or {})
+        spec["chain_blocked"] = True
+        job["spec"] = spec
+        self._save(job)
+        self.db.update("jobs", "id", job["id"], {"spec": spec})
+        self._secrets.pop(job["id"], None)
+        node_id = canvas_chain.node_id_for_job(self.db, job["id"])
+        if node_id is not None:
+            canvas_chain.park_to_idle(self.db, node_id)
+
+    def stop_node(self, node_id: int) -> str:
+        """Stop whatever the node has in flight, applying the chain's own rules.
+
+        A job still `queued` in the engine has not reached a worker, so the
+        node never executed — it goes back to `idle`, ready to run again. A
+        job actually `running`/`polling` was canceled by the user, and keeps
+        the retryable canceled state its card has always shown. A node with
+        nothing in flight keeps whatever state it already has (a `failed` node
+        stays failed so its retry stays available).
+        """
+        node_id = int(node_id)
+        request = canvas_chain.latest_request(self.db, node_id)
+        job = self.get(request["job_id"]) if request else None
+        if job is None or job["status"] not in ACTIVE:
+            row = self.db.one("SELECT status FROM canvas_nodes WHERE id=?", (node_id,))
+            return (row or {}).get("status") or "idle"
+        if job["status"] == "queued":
+            # Still waiting for its upstream: stop it before it ever ran.
+            self._park_waiting(job, "dừng chuỗi: node nguồn đã dừng")
+            return "idle"
+        job_id = job["id"]
+        self.db.update("jobs", "id", job_id, {
+            "status": "canceled", "updated_at": now(), "finished_at": now(),
+            "error": "đã huỷ (Flow vẫn có thể render xong)", "note": None,
+        })
+        task = self.tasks.get(job_id)
+        if task:
+            task.cancel()
+        job = self.get(job_id)
+        self.events.publish("job", self._brief(job))
+        canvas_chain.mark_canceled(self.db, node_id, request["request_id"])
+        return "canceled"
+
+    def stop_board(self, board_id: int) -> list[dict]:
+        """Stop every node of a board that has a job in flight (Stop All).
+
+        Each node goes through the same per-node rules as `stop_node`, so a
+        waiting node parks at `idle` and a running one lands on the retryable
+        canceled state — never `failed`.
+        """
+        rows = self.db.all(
+            "SELECT n.id FROM canvas_nodes n "
+            "WHERE n.board_id=? AND n.status IN ('queued','running') "
+            "ORDER BY n.id",
+            (int(board_id),),
+        )
+        stopped = []
+        for row in rows:
+            status = self.stop_node(int(row["id"]))
+            stopped.append({"id": int(row["id"]), "status": status})
+        return stopped
+
+    def _park_waiting(self, job: dict, message: str) -> None:
+        """Cancel a job that is queued waiting on an upstream it will never get.
+
+        `queued` is the engine's own pre-flight status, so a job in that state
+        has not reached a worker yet — the node behind it never ran.
+        """
+        self.db.update("jobs", "id", job["id"], {
+            "status": "canceled", "error": message[:500], "note": None,
+            "updated_at": now(), "finished_at": now(),
+        })
+        task = self.tasks.get(job["id"])
+        if task:
+            task.cancel()
+        self.events.publish("job", self._brief({**job, "status": "canceled", "note": None}))
+        node_id = canvas_chain.node_id_for_job(self.db, job["id"])
+        if node_id is not None:
+            canvas_chain.park_to_idle(self.db, node_id)
+
     async def _webhook(self, job_id: str) -> None:
         job = self.get(job_id)
         url = (job or {}).get("spec", {}).get("webhook_url")
@@ -518,6 +623,14 @@ class JobEngine:
                 await self._run_template(job, worker, calls[0])
         except asyncio.CancelledError:
             raise
+        except ChainStopped as exc:
+            # A prerequisite stopped the chain. This job never reached a
+            # worker, so it is parked at `idle` rather than recorded as a
+            # failure — only the node that actually failed carries `failed`.
+            log.info("chain stopped for job %s: %s", job_id, exc)
+            current = self.get(job_id)
+            if current and current["status"] in ACTIVE:
+                self._block_chain(current, str(exc))
         except Exception as exc:  # noqa: BLE001 — reported on the job, never swallowed
             log.exception("job %s failed", job_id)
             current = self.get(job_id)
@@ -550,30 +663,37 @@ class JobEngine:
                     else:
                         source_node = self.db.one("SELECT status FROM canvas_nodes WHERE id=?", (dep["source_node_id"],))
                         if not source_node or source_node["status"] not in {"idle", "queued", "running"}:
-                            raise fb.FlowError(f"node nguồn #{dep.get('source_node_id')} không tạo được request")
+                            # The upstream node itself is in error (or gone):
+                            # this node never runs and never fails — it is
+                            # parked by `_block_chain`.
+                            raise ChainStopped(f"node nguồn #{dep.get('source_node_id')} không tạo được request")
                         break
                 request = self.db.one("SELECT job_id FROM canvas_requests WHERE id=?", (request_id,))
                 if not request:
-                    raise fb.FlowError(f"node nguồn #{dep.get('source_node_id')} không còn request để chờ")
+                    raise ChainStopped(f"node nguồn #{dep.get('source_node_id')} không còn request để chờ")
                 upstream = self.get(request["job_id"])
                 if not upstream:
-                    raise fb.FlowError(f"node nguồn #{dep.get('source_node_id')} mất job")
+                    raise ChainStopped(f"node nguồn #{dep.get('source_node_id')} mất job")
                 if upstream["status"] in ACTIVE:
                     break
                 if upstream["status"] != "done":
                     detail = upstream.get("error") or upstream["status"]
-                    raise fb.FlowError(f"dừng chuỗi: node nguồn #{dep.get('source_node_id')} thất bại ({detail})")
+                    raise ChainStopped(
+                        f"dừng chuỗi: node nguồn #{dep.get('source_node_id')} thất bại ({detail})")
                 outputs = upstream.get("results") or []
                 idx = dep.get("source_variant_idx")
                 output = outputs[idx] if isinstance(idx, int) and 0 <= idx < len(outputs) else (outputs[0] if outputs else None)
                 media_id = (output or {}).get("media_id")
                 if not media_id:
-                    raise fb.FlowError(f"node nguồn #{dep.get('source_node_id')} hoàn tất nhưng không có media")
+                    # "done" without output cannot feed this node, so the
+                    # dependency is not satisfied — same treatment as a
+                    # failed upstream: parked, not failed.
+                    raise ChainStopped(f"node nguồn #{dep.get('source_node_id')} hoàn tất nhưng không có media")
                 resolved.append((dep, str(media_id)))
             else:
                 break
             if asyncio.get_running_loop().time() - started > timeout:
-                raise fb.FlowError("hết thời gian chờ node nguồn hoàn tất")
+                raise ChainStopped("hết thời gian chờ node nguồn hoàn tất")
             job["note"] = "Đang chờ node nguồn hoàn tất…"
             self._save(job, "note")
             await asyncio.sleep(1.5)

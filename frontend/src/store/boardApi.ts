@@ -222,15 +222,25 @@ export async function cancelCanvasRequest(id: string | number): Promise<{ id: st
   });
 }
 
-export async function resumeCanvasChain(
+/**
+ * Stop a node AND every node that transitively depends on it.
+ *
+ * Scope comes from the dependency graph on the backend; `stopped` reports the
+ * state each affected node was left in: `idle` (it was still queued, never
+ * ran) or `canceled` (it was mid-generation, stays retryable).
+ */
+export async function stopCanvasChain(
   boardId: number,
   nodeId: number,
-  requestId: string | number,
-): Promise<{ items: any[] }> {
-  return api(`/api/boards/${boardId}/nodes/${nodeId}/resume-chain`, {
-    method: "POST",
-    body: { request_id: String(requestId) },
-  });
+): Promise<{ stopped: { id: number; status: string }[] }> {
+  return api(`/api/boards/${boardId}/nodes/${nodeId}/stop-chain`, { method: "POST" });
+}
+
+/** Stop every running/queued node of the project (header Stop All). */
+export async function stopCanvasBoard(
+  boardId: number,
+): Promise<{ stopped: { id: number; status: string }[] }> {
+  return api(`/api/boards/${boardId}/stop-all`, { method: "POST" });
 }
 
 export async function listBoardRequests(boardId?: number, _opts?: any): Promise<{ items: any[] }> {

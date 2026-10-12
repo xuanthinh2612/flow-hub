@@ -8,6 +8,7 @@ import { GenerationDialog } from '../components/GenerationDialog';
 import { AddNodePalette } from '../canvas/AddNodePalette';
 import { ResultViewer } from '../components/ResultViewer';
 import { useBoardStore } from '../store/board';
+import { useGenerationStore } from '../store/generation';
 import { getBoardByPublicId } from '../store/boardApi';
 
 export const CanvasVideoCreatePage: React.FC = () => {
@@ -18,6 +19,10 @@ export const CanvasVideoCreatePage: React.FC = () => {
   const boardId = useBoardStore((s) => s.boardId);
   const boardPublicId = useBoardStore((s) => s.boardPublicId);
   const boardName = useBoardStore((s) => s.boardName);
+  const runningChain = useGenerationStore((s) => s.runningChain);
+  const stoppingBoard = useGenerationStore((s) => s.stoppingBoard);
+  const runAll = useGenerationStore((s) => s.runAll);
+  const stopBoard = useGenerationStore((s) => s.stopBoard);
 
   // Initialize the board store on first mount — identical to flowboard's
   // App.tsx pattern.  Without this, boardId stays null and every
@@ -44,6 +49,28 @@ export const CanvasVideoCreatePage: React.FC = () => {
         <header className="page-header" style={{ flexShrink: 0, padding: '5px' }}>
           <Link className="btn btn-sm" to="/canvas">← Dự án</Link>
           <h2 style={{ margin: 0 }}>{boardName || 'Canvas video'}</h2>
+          {boardId !== null && (
+            <>
+              <button
+                type="button"
+                className="btn btn-sm"
+                title="Chạy toàn bộ project: bỏ qua node đã xong, xếp theo dependency"
+                disabled={runningChain}
+                onClick={() => void runAll()}
+              >
+                {runningChain ? 'Đang chạy…' : '▶ Chạy tất cả'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-danger"
+                title="Dừng mọi node đang chạy / đang chờ trong project"
+                disabled={stoppingBoard}
+                onClick={() => void stopBoard()}
+              >
+                {stoppingBoard ? 'Đang dừng…' : '■ Dừng tất cả'}
+              </button>
+            </>
+          )}
           {boardPublicId && <Link className="btn btn-sm" to={`/library?workspace_id=${boardPublicId}`}>Thư viện project</Link>}
         </header>
         <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
