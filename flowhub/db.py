@@ -65,7 +65,11 @@ CREATE TABLE IF NOT EXISTS templates (
 
 CREATE TABLE IF NOT EXISTS canvas_boards (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, project_id TEXT NOT NULL DEFAULT 'default',
-  public_id TEXT, created_at REAL, viewport TEXT, worker_id TEXT);
+  public_id TEXT, created_at REAL, viewport TEXT, worker_id TEXT,
+  -- The `flow-hub-canvas-project` document a board was imported from, verbatim.
+  -- NULL for boards the user built by hand. Reading a project back therefore
+  -- never depends on the runtime having understood every field of the file.
+  source_json TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS canvas_boards_public_id ON canvas_boards(public_id);
 CREATE TABLE IF NOT EXISTS canvas_nodes (
   id INTEGER PRIMARY KEY AUTOINCREMENT, board_id INTEGER NOT NULL REFERENCES canvas_boards(id) ON DELETE CASCADE,
@@ -86,7 +90,7 @@ CREATE INDEX IF NOT EXISTS canvas_requests_node ON canvas_requests(node_id, crea
 #: Columns stored as JSON text and decoded on the way out.
 JSON_COLUMNS = {"info", "spec", "warnings", "ops", "results", "params", "form_keys", "headers", "rpcs",
                 "summary", "response", "strings", "actions", "data", "inner", "variables", "check_result",
-                "rpcids", "viewport"}
+                "rpcids", "viewport", "source_json"}
 
 
 def _encode(key: str, value: Any) -> Any:
@@ -121,6 +125,8 @@ class DB:
         board_columns = {row[1] for row in self._conn.execute("PRAGMA table_info(canvas_boards)")}
         if "worker_id" not in board_columns:
             self._conn.execute("ALTER TABLE canvas_boards ADD COLUMN worker_id TEXT")
+        if "source_json" not in board_columns:
+            self._conn.execute("ALTER TABLE canvas_boards ADD COLUMN source_json TEXT")
 
     @contextmanager
     def transaction(self):

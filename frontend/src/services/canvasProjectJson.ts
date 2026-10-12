@@ -212,7 +212,7 @@ export async function exportCanvasProjectJson(project: Board): Promise<number> {
   }
   const payload = {
     format: 'flow-hub-canvas-project',
-    format_version: 4,
+    format_version: 1,
     project: { name: detail.board.name },
     nodes: exportedNodes,
     edges,

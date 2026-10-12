@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useGenerationStore } from "../store/generation";
-import { useBoardStore, type StoryboardGrid } from "../store/board";
+import { useBoardStore, type FlowNode, type StoryboardGrid } from "../store/board";
 import {
   STORYBOARD_GRIDS,
   buildStoryboardPrompt,
@@ -51,6 +51,50 @@ const REF_SOURCE_TYPES = new Set([
   "Storyboard",
   "video",
 ]);
+
+type RefSourceEntry = {
+  edgeId: string;
+  node: FlowNode;
+  // `undefined` = upstream node hasn't produced any media yet. Kept in the
+  // list (rather than dropped) so it can surface as a pending notice.
+  mediaId: string | undefined;
+  variantIdx: number | null;
+  allVariants: string[];
+};
+
+// Unified "source chưa sẵn sàng" messaging. Every downstream target (image,
+// character, storyboard, i2v, r2v, video_continuation) shows the SAME
+// warning box + wording when an upstream source hasn't produced media yet,
+// so the user always knows exactly which node to go generate first.
+function mediaNounFor(node: FlowNode): "ảnh" | "video" {
+  return node.data.type === "video" ? "video" : "ảnh";
+}
+
+function pendingSourceMessage(node: FlowNode): string {
+  const id = node.data.shortId || node.id;
+  const noun = mediaNounFor(node);
+  const status = node.data.status;
+  if (status === "queued" || status === "running") {
+    return `Node #${id} đang được tạo ${noun} — vui lòng chờ hoàn thành trước.`;
+  }
+  if (status === "done") {
+    return `Node #${id} đã xong nhưng chưa có ${noun} file. Hãy tạo lại ${noun} trước khi gen node này.`;
+  }
+  return `Node #${id} chưa có ${noun} kết quả. Hãy tạo ${noun} trước khi gen node này.`;
+}
+
+function SourcePendingNotice({ nodes }: { nodes: FlowNode[] }) {
+  if (nodes.length === 0) return null;
+  return (
+    <div className="source-pending-notice" role="status">
+      {nodes.map((n) => (
+        <div key={n.id} className="source-pending-notice__item">
+          ⚠ {pendingSourceMessage(n)}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function buildCharacterPrompt(
   gender: GenderKey | null,
@@ -376,10 +420,11 @@ export function GenerationDialog() {
     return source.data.status === "idle" && !hasMedia;
   });
 
-  // Omni Flash is a video model but with image-target semantics: it
-  // takes ingredients (multi reference images), NOT a single i2v start
-  // frame. So the dialog should show the same "Source references" chip
-  // list that image targets use, and hide Veo's source-image selector.
+  // Omni Flash is a video model but dispatches with ingredient semantics
+  // (multi reference images). Display-wise it now mirrors every other
+  // video model: the dialog derives its layout purely from the upstream
+  // graph (mode + connected sources), and only the Resolution / Duration
+  // fields are shown additionally when Omni is selected.
   const isOmniVideo = isVideo && videoModelFamily === "omni_flash";
   const rawRefSourceNodeCount = rfId
     ? edges
@@ -393,7 +438,9 @@ export function GenerationDialog() {
   const actualConnectedMode = videoInfo?.mode === "i2v" 
     ? (totalConnectedSources >= 2 ? "r2v" : connectedVideoMode) 
     : videoInfo?.mode;
-  const isEffectiveR2v = isVideo && (videoInfo?.mode === "i2v" || videoInfo?.mode === "r2v") && (isOmniVideo || actualConnectedMode === "r2v");
+  const isEffectiveR2v = isVideo && (
+    (videoInfo?.mode === "i2v" || videoInfo?.mode === "r2v") && actualConnectedMode === "r2v"
+  );
   // Prompt nodes are text-only — clicking Generate runs auto_prompt
   // synthesis from upstream context and writes the result back to
   // node.data.generation.prompt. No image dispatch, no aspect/variants.
@@ -443,9 +490,11 @@ export function GenerationDialog() {
   // separate list from refSourceNodes; the dialog renders them as a
   // text-only chip alongside image refs so the user can SEE that a
   // Prompt node is influencing the gen.
-  // Both image targets AND Omni-video targets use the ingredient chip
-  // list (multi-ref upstream → one chip per edge). Veo i2v video has
-  // its own single-source-with-variant-batch picker below.
+  // Both image targets AND video targets in Ingredients (r2v) mode use
+  // the ingredient chip list (multi-ref upstream → one chip per edge).
+  // Video i2v has its own single-source-with-variant-batch picker below.
+  // (Model-agnostic: derived from the connected graph, not from which
+  // video model family is selected.)
   const promptSourceNodes = (!isVideo || isEffectiveR2v) && rfId
     ? edges
         .filter((e) => e.target === rfId)
@@ -458,7 +507,12 @@ export function GenerationDialog() {
         .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     : [];
 
-  const refSourceNodes = (!isVideo || isEffectiveR2v) && rfId
+  // NOTE: an upstream ref node that hasn't produced any media yet is kept
+  // in the list (mediaId undefined) instead of being dropped — dropping it
+  // made the dialog show NO notice at all, so the user never knew a source
+  // was still pending. We split into `refSourceNodes` (renderable thumbs)
+  // and `pendingRefNodes` (rendered as the unified ⚠ pending notice).
+  const refSourceEntries: RefSourceEntry[] = (!isVideo || isEffectiveR2v) && rfId
     ? edges
         .filter((e) => e.target === rfId)
         .map((e) => {
@@ -485,7 +539,6 @@ export function GenerationDialog() {
             mediaId = variants[0];
             variantIdx = 0;
           }
-          if (!mediaId) return null;
           return {
             edgeId: e.id,
             node: n,
@@ -494,8 +547,12 @@ export function GenerationDialog() {
             allVariants: variants,
           };
         })
-        .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+        .filter((entry): entry is RefSourceEntry => entry !== null)
     : [];
+  const refSourceNodes = refSourceEntries.filter((e) => Boolean(e.mediaId)) as Array<RefSourceEntry & { mediaId: string }>;
+  const pendingRefNodes = refSourceEntries
+    .filter((e) => !e.mediaId)
+    .map((e) => e.node);
 
   // Reset form when dialog opens for a different node
   useEffect(() => {
@@ -1363,7 +1420,7 @@ export function GenerationDialog() {
           </div>
         )}
 
-        {isVideo && !isOmniVideo && (
+        {isVideo && videoInfo?.mode !== "t2v" && (
           <div className="gen-dialog__field">
 
             {videoInfo?.mode === "video_continuation" && (
@@ -1380,9 +1437,9 @@ export function GenerationDialog() {
                   </div>
                 </div>
                 {videoInfo.sourceNode?.data.status !== "done" || !videoInfo.sourceMediaId ? (
-                  <div className="source-continuation-pending">
-                    ⚠ Video trước (#{videoInfo.sourceNode?.data.shortId}) chưa hoàn thành hoặc chưa có video file. Vui lòng chờ video trước tạo xong.
-                  </div>
+                  <SourcePendingNotice
+                    nodes={videoInfo.sourceNode ? [videoInfo.sourceNode] : []}
+                  />
                 ) : (
                   <div className="source-continuation-preview">
                     <video
@@ -1507,9 +1564,9 @@ export function GenerationDialog() {
                     </p>
                   </>
                 ) : (
-                  <div className="source-image-row source-image-row--empty">
-                    Node #{sourceNode?.data.shortId || "nguồn"} chưa có ảnh kết quả. Hãy tạo ảnh trước.
-                  </div>
+                  <SourcePendingNotice
+                    nodes={sourceNode ? [sourceNode] : []}
+                  />
                 )}
                   </>
                 )}
@@ -1521,13 +1578,16 @@ export function GenerationDialog() {
         {/* Source references — image refs (character/image/visual_asset/
             Storyboard) AND prompt-text refs. Prompt nodes don't have
             media but their text feeds the auto-prompt synth, so we
-            surface them as text chips next to the thumbnails. */}
+            surface them as text chips next to the thumbnails.
+            Upstream nodes that haven't produced media yet still appear
+            here — as the unified ⚠ pending notice — so a never/partially
+            generated source is never silently invisible. */}
         {(!isVideo || isEffectiveR2v)
-          && (refSourceNodes.length > 0 || promptSourceNodes.length > 0)
+          && (refSourceNodes.length > 0 || promptSourceNodes.length > 0 || pendingRefNodes.length > 0)
           && (
           <div className="gen-dialog__field">
             <span className="gen-dialog__label">
-              Source references ({refSourceNodes.length + promptSourceNodes.length})
+              Source references ({refSourceNodes.length + promptSourceNodes.length + pendingRefNodes.length})
             </span>
             <div className="ref-source-row">
               {promptSourceNodes.map((p) => {
@@ -1655,6 +1715,9 @@ export function GenerationDialog() {
                 />
               )}
             </div>
+            {/* Upstream refs still generating / never generated — same
+                unified notice the video sources use. */}
+            <SourcePendingNotice nodes={pendingRefNodes} />
           </div>
         )}
 
@@ -1715,7 +1778,7 @@ export function GenerationDialog() {
           <div className="gen-dialog__field">
             <span className="gen-dialog__label">
               Model
-              <InfoTip tip="Sticky — selection được lưu cho các lần dispatch sau (đồng bộ với Settings). Veo dùng i2v (1 source image); Omni Flash dùng reference ingredients (đa ảnh)." />
+              <InfoTip tip="Sticky — selection được lưu cho các lần dispatch sau (đồng bộ với Settings). Veo dùng i2v (1 source image); Omni Flash dùng ingredients từ ảnh và video đầu vào." />
             </span>
             <select
               className="gen-dialog__select"

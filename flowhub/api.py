@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from pydantic import BaseModel, Field
 
 from .catalog import MODES
+from .canvas_project_import import CanvasProjectImportError, import_canvas_project, new_public_id
 from .canvas_project_json import CanvasProjectExportError, build_canvas_project_snapshot
 from .config import VERSION
 from .presets import build_character_prompt, presets
@@ -50,8 +51,7 @@ def _bad(exc: Exception) -> HTTPException:
 
 
 def _new_project_id() -> str:
-    alphabet = string.ascii_letters + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(48))
+    return new_public_id()
 
 
 def _assert_canvas_extension_online(core: Any, worker_id: Optional[str]) -> None:
@@ -167,6 +167,25 @@ async def export_canvas_board(board_id: int, request: Request):
     try:
         return await build_canvas_project_snapshot(core_of(request), board_id)
     except CanvasProjectExportError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
+
+
+@api.post("/boards/import-project", tags=["canvas"], status_code=201)
+async def import_canvas_project_endpoint(request: Request):
+    """Rebuild a whole canvas project from an exported `flow-hub-canvas-project` file.
+
+    The body is the raw JSON document (what the dashboard's "Export JSON"
+    button downloads). Validation happens before anything is written; the
+    write itself runs in a single transaction, so a bad file never leaves a
+    half-imported board behind.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(400, "File không phải JSON hợp lệ.") from None
+    try:
+        return import_canvas_project(core_of(request), payload)
+    except CanvasProjectImportError as exc:
         raise HTTPException(exc.status_code, exc.detail) from exc
 
 

@@ -1,11 +1,12 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Copy, Download, Pencil } from 'lucide-react';
+import { Copy, Download, Pencil, Upload } from 'lucide-react';
 import { createBoard, deleteBoard, listBoards, patchBoard, type Board } from '../store/boardApi';
 import { useToast } from '../context/ToastContext';
 import { api } from '../api/client';
 import type { WorkerInfo } from '../api/types';
 import { exportCanvasProjectJson } from '../services/canvasProjectJson';
+import { importCanvasProjectJson } from '../services/canvasProjectImport';
 
 type Project = Board & { node_count?: number; video_count?: number; image_count?: number };
 
@@ -15,9 +16,11 @@ export const CanvasProjectsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [exporting, setExporting] = useState<number | null>(null);
+  const [importing, setImporting] = useState(false);
   const [workers, setWorkers] = useState<WorkerInfo[]>([]);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -128,6 +131,26 @@ export const CanvasProjectsPage: React.FC = () => {
     }
   };
 
+  const openImportDialog = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setImporting(true);
+    try {
+      const { board, nodeCount, edgeCount } = await importCanvasProjectJson(file);
+      toast(`\u0110\u00e3 import project “${board.name}” (${nodeCount} node, ${edgeCount} li\u00ean k\u1ebft)`, 'ok');
+      navigate(`/canvas/${board.public_id}`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Kh\u00f4ng import \u0111\u01b0\u1ee3c project', 'err');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <section style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
       <header className="page-head" style={{ alignItems: 'center' }}>
@@ -135,8 +158,20 @@ export const CanvasProjectsPage: React.FC = () => {
           <h1>Project video</h1>
           <p>Mỗi project có canvas và thư viện media riêng.</p>
         </div>
-        {!!projects.length && <button className="btn btn-primary" onClick={createProject} disabled={creating}>+ Project mới</button>}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {!!projects.length && <button className="btn btn-primary" onClick={createProject} disabled={creating}>+ Project mới</button>}
+          <button className="btn" onClick={openImportDialog} disabled={importing}>
+            <Upload size={15} /> {importing ? 'Đang import…' : 'Import Project'}
+          </button>
+        </div>
       </header>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json,application/json"
+        style={{ display: 'none' }}
+        onChange={(event) => void handleImportFile(event)}
+      />
 
       {loading ? <p className="empty">Đang tải project…</p> : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 16 }}>
@@ -151,14 +186,16 @@ export const CanvasProjectsPage: React.FC = () => {
             <article key={project.id} style={{ minHeight: 190, border: '1px solid #334155', borderRadius: 14, padding: 18, background: '#111827', display: 'flex', flexDirection: 'column' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                 <button type="button" onClick={() => navigate(`/canvas/${project.public_id}`)} style={{ flex: 1, minWidth: 0, textAlign: 'left', cursor: 'pointer', border: 0, padding: 0, color: 'inherit', background: 'transparent' }}>
-                  <h2 style={{ margin: 0, fontSize: '1.05rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</h2>
+                  <h2 style={{ margin: 0, fontSize: '1.05rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span style={{ fontSize: 25, marginBottom: 12 }}>▦</span>&nbsp;&nbsp;&nbsp;
+                    {project.name}
+                  </h2>
                 </button>
                 <button type="button" className="btn btn-sm" aria-label={`Đổi tên ${project.name}`} title="Đổi tên project" onClick={() => void renameProject(project)} style={{ padding: 5, lineHeight: 0, flexShrink: 0 }}>
                   <Pencil size={15} />
                 </button>
               </div>
               <button type="button" onClick={() => navigate(`/canvas/${project.public_id}`)} style={{ flex: 1, textAlign: 'left', cursor: 'pointer', border: 0, padding: 0, color: 'inherit', background: 'transparent' }}>
-                <div style={{ fontSize: 25, marginBottom: 12 }}>▦</div>
                 <span className="muted">{project.node_count ?? 0} node · {project.video_count ?? 0} video · {project.image_count ?? 0} ảnh</span>
               </button>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, marginTop: 10 }}>
