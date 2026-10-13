@@ -759,7 +759,7 @@ class JobEngine:
             spec["ref_media_ids"] = list(spec.get("ref_media_ids") or []) + frame_ids
             if spec.get("ref_media_names") is not None:
                 spec["ref_media_names"] = list(spec["ref_media_names"]) + [
-                    f"last_frame_{video_id[:12]}.jpg" for video_id in video_ids
+                    f"last_frame_{video_id[:12]}.png" for video_id in video_ids
                 ]
         elif spec.get("type") in IMAGE_TYPES:
             spec["ref_media_ids"] = list(spec.get("ref_media_ids") or []) + frame_ids
@@ -777,7 +777,7 @@ class JobEngine:
             process = await asyncio.create_subprocess_exec(
                 "ffmpeg", "-hide_banner", "-loglevel", "error", "-sseof", "-5",
                 "-i", str(path), "-vf", "reverse", "-frames:v", "1", "-f", "image2pipe",
-                "-an", "-vcodec", "mjpeg", "pipe:1", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                "-an", "-vcodec", "png", "pipe:1", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
         except FileNotFoundError as exc:
@@ -790,9 +790,9 @@ class JobEngine:
         return stdout
 
     async def _upload_frame(self, job: dict, worker: "Worker", project_id: str, source_video_id: str, data: bytes) -> str:
-        file_name = f"last_frame_{source_video_id[:12]}.jpg"
+        file_name = f"last_frame_{source_video_id[:12]}.png"
         encoded = base64.b64encode(data).decode("ascii")
-        call = fb.upload_request(encoded, project_id, "image/jpeg", file_name)
+        call = fb.upload_request(encoded, project_id, "image/png", file_name)
         uploaded_id = fb.read_uploaded_media_id(await self._call(
             job, worker, fb.RPC_UPLOAD_IMAGE, call, self.observations.captcha_action_for(fb.RPC_UPLOAD_IMAGE),
             body_preview=call.replace(encoded, f"<base64: {len(encoded)} ký tự>"), timeout=180,
@@ -802,7 +802,7 @@ class JobEngine:
         self.media.upsert({"id": uploaded_id, "kind": "image", "url": urls[1] if urls else None,
                            "prompt": file_name, "source": "video_frame", "job_id": job["id"],
                            "workspace_id": workspace_id})
-        self.media.save_bytes(uploaded_id, data, "image/jpeg")
+        self.media.save_bytes(uploaded_id, data, "image/png")
         return uploaded_id
 
     async def _run_images(self, job: dict, worker: "Worker", calls: list[Call], project_id: str) -> None:
