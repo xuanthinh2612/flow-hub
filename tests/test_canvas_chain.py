@@ -365,3 +365,65 @@ def test_topological_order_tolerates_a_cycle(client):
 
     # No node is dropped: a cycle cannot be ordered, it is reported.
     assert sorted(canvas_chain.topo_order(core.db, board, [a, b])) == sorted([a, b])
+
+
+
+# ── 5. an uploaded image is a valid chain source ───────────────────────────
+
+def test_uploaded_image_can_feed_a_downstream_node(client):
+    """An uploaded image must be usable as the source of a chain.
+
+    Uploads take a different path from generated media: `/api/uploads` creates
+    a bare `jobs` row, so the node ends up `status="done"` with
+    `data.mediaId` set and NO `canvas_requests` row at all. The chain check in
+    `create_canvas_request` must read `mediaId` off the node instead of
+    concluding the source has no result — otherwise every image→video chain
+    dies on "node nguồn #N đang lỗi hoặc chưa có kết quả để nối chuỗi".
+    """
+    board = make_board(client)
+    core = client.app.state.core
+    public_id = core.db.one("SELECT public_id FROM canvas_boards WHERE id=?", (board,))["public_id"]
+
+    uploaded = make_node(client, board, node_type="image")
+    video = make_node(client, board, node_type="video")
+    make_edge(client, board, uploaded, video)
+
+    core.db.insert("media", {"id": "up-1", "kind": "image", "url": "u",
+                             "workspace_id": public_id, "created_at": 1.0})
+    # Exactly what NodeCard's upload path persists once the job finishes.
+    set_node_status(core, uploaded, "done", {"mediaId": "up-1", "mediaIds": None})
+
+    res = client.post("/api/canvas/requests", json={
+        "type": "i2v", "node_id": str(video), "params": {},
+        "spec": {"type": "i2v", "prompt": "make it move", "start_media_ids": ["up-1"]},
+        "workspace_id": public_id,
+    })
+    assert res.status_code == 201, res.text
+
+    job_id = core.db.one("SELECT job_id FROM canvas_requests WHERE id=?", (res.json()["id"],))["job_id"]
+    # The source already has media, so there is nothing to wait for.
+    assert not core.jobs.get(job_id)["spec"].get("canvas_dependencies")
+
+
+def test_generated_image_chain_still_waits_when_it_has_no_media_yet(client):
+    """Guard the other side of the fix: a source with a *done* job but no
+    media must still be awaited, not dispatched with a missing input."""
+    board = make_board(client)
+    core = client.app.state.core
+    public_id = core.db.one("SELECT public_id FROM canvas_boards WHERE id=?", (board,))["public_id"]
+
+    upstream = make_node(client, board, node_type="image")
+    video = make_node(client, board, node_type="video")
+    make_edge(client, board, upstream, video)
+
+    make_job(core, upstream, status="done", results=[])
+    set_node_status(core, upstream, "done")
+
+    res = client.post("/api/canvas/requests", json={
+        "type": "i2v", "node_id": str(video), "params": {},
+        "spec": {"type": "i2v", "prompt": "p"}, "workspace_id": public_id,
+    })
+    assert res.status_code == 201, res.text
+    job_id = core.db.one("SELECT job_id FROM canvas_requests WHERE id=?", (res.json()["id"],))["job_id"]
+    deps = core.jobs.get(job_id)["spec"]["canvas_dependencies"]
+    assert [d["source_node_id"] for d in deps] == [upstream]

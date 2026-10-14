@@ -394,10 +394,18 @@ async def create_canvas_request(body: CanvasRequestCreate, request: Request):
     for source in incoming:
         if source["type"] not in {"image", "video", "Storyboard", "character", "visual_asset"}:
             continue
-        try:
-            source_data = json.loads(source.get("data") or "{}")
-        except (TypeError, json.JSONDecodeError):
-            source_data = {}
+        # `canvas_nodes.data` is a JSON column, so the DB layer already decoded
+        # it into a dict. Calling json.loads() on that raises TypeError, which
+        # would silently wipe the media of an uploaded source and make the
+        # whole chain look like it had no result.
+        raw_data = source.get("data")
+        if isinstance(raw_data, dict):
+            source_data = raw_data
+        else:
+            try:
+                source_data = json.loads(raw_data or "{}")
+            except (TypeError, json.JSONDecodeError):
+                source_data = {}
         source_variants = source_data.get("mediaIds") if isinstance(source_data.get("mediaIds"), list) else []
         existing_ids = [value for value in (source_data.get("mediaId"), *source_variants) if value]
         latest = core.db.one(
@@ -815,7 +823,7 @@ async def workers(request: Request):
 # ── jobs ────────────────────────────────────────────────────────────────────
 
 class JobCreate(BaseModel):
-    type: Literal["image", "character", "edit", "t2v", "i2v", "first_last", "r2v", "upscale", "template"]
+    type: Literal["image", "character", "edit", "t2v", "i2v", "first_last", "r2v", "extend_video", "upscale", "template"]
     prompt: Optional[str] = None
     prompts: Optional[list[str]] = Field(None, description="prompt riêng từng biến thể ảnh")
     model: Optional[str] = Field(None, description="wire id chính xác; bỏ trống để chọn theo family")
@@ -832,6 +840,8 @@ class JobCreate(BaseModel):
     end_media_id: Optional[str] = None
     base_media_id: Optional[str] = None
     media_id: Optional[str] = None
+    source_media_id: Optional[str] = Field(None, description="fZytfe extend: video để kéo dài (media id)")
+    scene_id: Optional[str] = Field(None, description="fZytfe: scene uuid của Flow (thường = /scene/<id>), không bắt buộc")
     character: Optional[dict] = Field(None, description="{gender, country, vibe, extras}")
     character_id: Optional[str] = Field(None, description="ảnh: gắn vào một Nhân vật (Character) có sẵn trên Flow")
     template_id: Optional[int] = None
@@ -849,6 +859,11 @@ async def create_job(body: JobCreate, request: Request):
         if body.type == "upscale" and body.media_id:
             source = core_of(request).media.get(body.media_id)
             if source:
+                spec["workspace_id"] = source.get("workspace_id")
+        if body.type == "extend_video" and (body.source_media_id or body.media_id):
+            source = core_of(request).media.get(body.source_media_id or body.media_id)
+            if source:
+                # Keep the extended clip in the same Flow workspace as its source.
                 spec["workspace_id"] = source.get("workspace_id")
         return core_of(request).jobs.create(spec)
     except ValueError as exc:
