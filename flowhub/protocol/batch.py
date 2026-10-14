@@ -35,6 +35,7 @@ RPC_GEN_VIDEO = "eb1hJf"            # image-to-video: Veo, Omni first frame
 RPC_GEN_VIDEO_TEXT = "YhhmEf"       # text-to-video
 RPC_GEN_VIDEO_FIRST_LAST = "nprQif"   # first + last frame: Omni, Veo Fast, Veo Lite
 RPC_GEN_VIDEO_REFERENCES = "MZZa6b"  # ingredients: Omni, Veo Fast
+RPC_GEN_VIDEO_EXTEND = "fZytfe"      # extend a clip: Veo 3.1 extension Lite
 RPC_OPERATION = "jwpduf"
 RPC_PROJECT_MEDIA = "Zzl0ze"
 RPC_MEDIA = "as29s"
@@ -49,6 +50,7 @@ RPC_NAMES: dict[str, str] = {
     RPC_GEN_VIDEO_TEXT: "Text → video",
     RPC_GEN_VIDEO_FIRST_LAST: "Video ảnh đầu + cuối",
     RPC_GEN_VIDEO_REFERENCES: "Video Ingredients",
+    RPC_GEN_VIDEO_EXTEND: "Extend video (kéo dài clip)",
     RPC_OPERATION: "Poll operation",
     RPC_PROJECT_MEDIA: "Danh sách media project",
     RPC_MEDIA: "URL media",
@@ -82,6 +84,7 @@ DEFAULT_CAPTCHA_ACTIONS: dict[str, str] = {
     RPC_GEN_VIDEO_TEXT: CAPTCHA_VIDEO,
     RPC_GEN_VIDEO_FIRST_LAST: CAPTCHA_VIDEO,
     RPC_GEN_VIDEO_REFERENCES: CAPTCHA_VIDEO,
+    RPC_GEN_VIDEO_EXTEND: CAPTCHA_VIDEO,
 }
 
 #: The extension swaps a freshly minted reCAPTCHA token in for this marker.
@@ -377,6 +380,59 @@ def reference_video_request(prompt: str, project_id: str, reference_media_ids: l
     if model.endswith("_360p"):
         request.extend([None, None, None, None, None, [4]])
     return build_envelope(RPC_GEN_VIDEO_REFERENCES, [[request], context(project_id), [client_uuid(), 2]])
+
+
+#: Source-clip size slots Flow's own UI always sends when extending.
+VIDEO_EXTEND_HEIGHT = 169
+VIDEO_EXTEND_WIDTH = 192
+
+#: Default wire id for fZytfe; overridable per-job through a custom model.
+EXTEND_VIDEO_MODEL = "veo_3_1_extension_lite"
+
+
+def extend_video_request(
+    prompt: str,
+    project_id: str,
+    source_media_id: str,
+    scene_id: Optional[str] = None,
+    model: str = EXTEND_VIDEO_MODEL,
+) -> str:
+    """Extend a clip (fZytfe). VERIFIED byte-for-byte on build
+    boq_labs-ai-sandbox-frontend_20261011.06_p0 for ``veo_3_1_extension_lite``:
+
+    inner[0] = [source-block, prompt-block, model, VIDEO_LANDSCAPE, None,
+                [scene_or_None, None, None, None, <uuid>, <uuid>]]
+    inner[1] = context(project_id)
+    inner[2] = [client_uuid, 2, null, [scene_id, 1]]   (last pair iff scene)
+
+    The input block is the only video kind that carries pixel slots
+    (``[null, mediaId, 169, 192]``). ``scene_id`` is the scene uuid
+    from the Flow URL (``.../scene/<scene_id>``); when provided it is
+    written in slot 5 and echoed as the footer ``[<scene>, 1]`` pair —
+    the only video RPC that does. Without it the request still
+    reproduces the observed shape, just without the scene context.
+    """
+    if not source_media_id:
+        raise ValueError("extend video needs a source video media id")
+    prompt_part = prompt_block(prompt)
+    scene = str(scene_id or "") if scene_id is not None else None
+    # slot 5 is the generic video client-id block with its leading null
+    # replaced by the scene uuid: [<scene|None>, null, null, null, <uuid>, <uuid>]
+    slot5 = client_ids()
+    slot5[0] = scene
+    request = [
+        [None, str(source_media_id), VIDEO_EXTEND_HEIGHT, VIDEO_EXTEND_WIDTH],
+        prompt_part,
+        str(model),
+        VIDEO_LANDSCAPE,
+        None,
+        slot5,
+    ]
+    # trailing [uuid, 2, null, [scene, 1]] iff scene was supplied
+    trailing: list[Any] = [client_uuid(), 2]
+    if scene:
+        trailing.extend([None, [scene, 1]])
+    return build_envelope(RPC_GEN_VIDEO_EXTEND, [[request], context(project_id), trailing])
 
 
 def i2v_request(prompt: str, project_id: str, source_media_id: str, aspect: int, model: str,

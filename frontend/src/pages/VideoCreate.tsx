@@ -12,6 +12,7 @@ const VIDEO_MODES = [
   { value: 'i2v' as const, label: 'Ảnh → Video', hint: 'eb1hJf' },
   { value: 'first_last' as const, label: 'Ảnh đầu + cuối', hint: 'nprQif' },
   { value: 'r2v' as const, label: 'Ingredients', hint: 'MZZa6b' },
+  { value: 'extend_video' as const, label: 'Extend video', hint: 'fZytfe' },
 ];
 
 const VIDEO_ASPECTS = [
@@ -75,6 +76,8 @@ export const VideoCreatePage: React.FC = () => {
       start_media_id: form.mode === 'first_last' ? form.start : null,
       end_media_id: form.mode === 'first_last' ? form.end : null,
       ref_media_ids: form.mode === 'r2v' ? form.refs : [],
+      source_media_id: form.mode === 'extend_video' ? form.extend : null,
+      scene_id: form.mode === 'extend_video' ? form.sceneId.trim() || null : null,
       timeout_min: Number(form.timeoutMin) || 10,
     };
   };
@@ -146,6 +149,18 @@ export const VideoCreatePage: React.FC = () => {
             </div>
           )}
 
+          {form.mode === 'extend_video' && (
+            <div className="field">
+              <div className="field-label">Video để kéo dài (chọn từ thư viện)</div>
+              <MediaPicker
+                value={form.extend}
+                multi={false}
+                onChange={(extend) => update({ extend })}
+                kind="video"
+              />
+            </div>
+          )}
+
           <div className="field">
             <div className="field-label">Prompt</div>
             <textarea
@@ -201,14 +216,16 @@ export const VideoCreatePage: React.FC = () => {
           )}
 
           <div className="grid-2">
-            <div className="field">
-              <div className="field-label">Tỉ lệ</div>
-              <ChipGroup
-                options={VIDEO_ASPECTS}
-                value={form.aspect}
-                onChange={(aspect) => update({ aspect })}
-              />
-            </div>
+            {form.mode !== 'extend_video' && (
+              <div className="field">
+                <div className="field-label">Tỉ lệ</div>
+                <ChipGroup
+                  options={VIDEO_ASPECTS}
+                  value={form.aspect}
+                  onChange={(aspect) => update({ aspect })}
+                />
+              </div>
+            )}
             <div className="field">
               <div className="field-label">
                 {form.mode === 'i2v' ? 'Số video mỗi ảnh' : 'Số video'}
@@ -223,6 +240,22 @@ export const VideoCreatePage: React.FC = () => {
 
           <details className="adv">
             <summary>Nâng cao</summary>
+            {form.mode === 'extend_video' && (
+              <div className="field">
+                <div className="field-label">Scene ID trên Flow (không bắt buộc)</div>
+                <input
+                  className="input mono"
+                  spellCheck={false}
+                  placeholder="vd. 492b184f-f72f-44dc-a643-7a98efaa7647 — phần /scene/ trong URL"
+                  value={form.sceneId}
+                  onChange={(e) => update({ sceneId: e.target.value })}
+                />
+                <p className="muted">
+                  Flow gửi kèm scene khi bạn extend trong giao diện. Bỏ trống vẫn gửi được — request
+                  giữ nguyên cấu trúc fZytfe, chỉ không có scene context.
+                </p>
+              </div>
+            )}
             <div className="field">
               <div className="field-label">Thời gian chờ tối đa (phút)</div>
               <input
@@ -239,7 +272,7 @@ export const VideoCreatePage: React.FC = () => {
           <ActionPreview label="Tạo video" getSpec={getSpec} />
         </div>
 
-        <RecentJobsPanel types={['t2v', 'i2v', 'first_last', 'r2v']} />
+        <RecentJobsPanel types={['t2v', 'i2v', 'first_last', 'r2v', 'extend_video']} />
       </div>
     </div>
   );

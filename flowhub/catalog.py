@@ -24,6 +24,7 @@ MODES = {
     "i2v": "Ảnh → Video (eb1hJf)",
     "first_last": "Ảnh đầu + cuối (nprQif)",
     "r2v": "Ingredients (MZZa6b)",
+    "extend_video": "Extend video (fZytfe)",
 }
 
 _V = "verified"
@@ -81,6 +82,9 @@ def _seed_rows() -> list[dict]:
         note=_OBS, sort=20)
     add("r2v", "veo_3_1_fast", "Veo 3.1 Fast", "veo_3_1_r2v_fast_portrait", aspect="portrait", status=_V,
         note=_OBS, sort=20)
+
+    add("extend_video", "veo_3_1_extension_lite", "Veo 3.1 Extension Lite", "veo_3_1_extension_lite",
+        aspect="landscape", status=_V, note=_OBS + " (fZytfe, kéo dài clip đã có)", default=True, sort=10)
     return rows
 
 

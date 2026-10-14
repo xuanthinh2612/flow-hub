@@ -114,6 +114,7 @@ Body Flow Hub dựng **khớp từng byte** với request thật của trang (`t
 | Text → video (YhhmEf) | `veo_3_1_t2v_fast`, `…_portrait`, `veo_3_1_t2v_lite` (chung key 2 tỉ lệ), `abra_t2v_8s/10s` (+ `_360p`) |
 | Đầu + cuối (nprQif) | `omni_flash_i2v_8s_first_last` **và `…_360p`** (cùng body, key mang resolution, không có slot option như YhhmEf/MZZa6b), `veo_3_1_i2v_s_fast_fl` (16:9), `veo_3_1_interpolation_lite` · crop giữa khi tỉ lệ ảnh ≠ video |
 | Ingredients (MZZa6b) | `abra_r2v_6s_360p`, `veo_3_1_r2v_fast_landscape` |
+| Extend video (fZytfe) | `veo_3_1_extension_lite` (fZytfe; kéo dài clip — nguồn `[null, mediaId, 169, 192]` + prompt + scene) · poll `jwpduf → as29s` như các loại video khác |
 | Upload (maseQ) | action reCAPTCHA `UPLOAD_IMAGE` |
 
 Chưa thấy trên Flow hiện tại (*unverified* trong Models): ảnh → video (eb1hJf, cả Veo lẫn Omni),

@@ -108,7 +108,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     return () => clearTimeout(timer);
   }, [resolve]);
 
-  const isVideoMode = ['t2v', 'i2v', 'first_last', 'r2v'].includes(mode);
+  const isVideoMode = ['t2v', 'i2v', 'first_last', 'r2v', 'extend_video'].includes(mode);
 
   const getLineText = () => {
     if (resolveError) return resolveError;

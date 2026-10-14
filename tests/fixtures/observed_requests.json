@@ -1636,5 +1636,133 @@
     2
    ]
   ]
+ },
+ {
+  "rpcid": "fZytfe",
+  "build": "boq_labs-ai-sandbox-frontend_20261011.06_p0",
+  "ts": 1791848860173,
+  "inner": [
+   [
+    [
+     [
+      null,
+      "b62b5b99-004e-4cd4-a999-93a7dd99d3ee",
+      169,
+      192
+     ],
+     [
+      null,
+      null,
+      [
+       [
+        [
+         "Chàng trai bước ra cửa và đi mất khỏi quán, để lại cô gái ngồi khóc\nyêu cầu logic trong ảnh dứt khoát, cửa nhà tường và đường dứt khoát không bị đi xuyên tường, nhân vật đi không đúng vửa !!! "
+        ]
+       ]
+      ]
+     ],
+     "veo_3_1_extension_lite",
+     2,
+     null,
+     [
+      "46cdcdbb-1641-4875-bea3-8010ed7bd155",
+      null,
+      null,
+      null,
+      "3AD5AC24-1330-4B38-A3B0-F1EC11E39A20",
+      "C4281DA5-9943-490C-8CA2-8612A87D1DA3"
+     ]
+    ]
+   ],
+   [
+    null,
+    22,
+    null,
+    null,
+    null,
+    "9097df3e-7023-44dc-99bd-2baebe413858",
+    null,
+    null,
+    null,
+    null,
+    [
+     "__CAPTCHA__",
+     1
+    ]
+   ],
+   [
+    "E690E236-1E13-406D-91D0-A039C1A269A8",
+    2,
+    null,
+    [
+     "46cdcdbb-1641-4875-bea3-8010ed7bd155",
+     1
+    ]
+   ]
+  ]
+ },
+ {
+  "rpcid": "fZytfe",
+  "build": "boq_labs-ai-sandbox-frontend_20261011.06_p0",
+  "ts": 1791892186863,
+  "inner": [
+   [
+    [
+     [
+      null,
+      "5d6dac5f-2da0-4821-9c16-9954305b4b61",
+      169,
+      192
+     ],
+     [
+      null,
+      null,
+      [
+       [
+        [
+         "After a few steps, he gradually slows down and stops. He turns his head over his shoulder, looking back toward the café entrance. Cut to a close-up of his face: his eyes linger on the place, his expression carrying quiet regret, longing, and words left unspoken. He hesitates, his lips slightly pressed together, as if struggling with the urge to return.\n "
+        ]
+       ]
+      ]
+     ],
+     "veo_3_1_extension_lite",
+     2,
+     null,
+     [
+      "492b184f-f72f-44dc-a643-7a98efaa7647",
+      null,
+      null,
+      null,
+      "0D708B30-9CB7-4605-BF25-A74029E4D02F",
+      "7CFA9385-BF35-465D-819F-3309539228FA"
+     ]
+    ]
+   ],
+   [
+    null,
+    22,
+    null,
+    null,
+    null,
+    "9097df3e-7023-44dc-99bd-2baebe413858",
+    null,
+    null,
+    null,
+    null,
+    [
+     "__CAPTCHA__",
+     1
+    ]
+   ],
+   [
+    "DC5E33B3-CDDA-46E9-B938-37D49F2607EC",
+    2,
+    null,
+    [
+     "492b184f-f72f-44dc-a643-7a98efaa7647",
+     1
+    ]
+   ]
+  ]
  }
 ]

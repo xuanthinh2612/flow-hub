@@ -24,7 +24,7 @@ USER_AGENT = re.compile(r"^Mozilla/\d")
 
 #: RPCs whose body Flow Hub builds itself — the ones worth a builder check.
 BUILT_RPCS = {fb.RPC_GEN_IMAGE, fb.RPC_GEN_VIDEO, fb.RPC_GEN_VIDEO_TEXT, fb.RPC_GEN_VIDEO_FIRST_LAST,
-              fb.RPC_GEN_VIDEO_REFERENCES}
+              fb.RPC_GEN_VIDEO_REFERENCES, fb.RPC_GEN_VIDEO_EXTEND}
 
 
 # ── decoding ────────────────────────────────────────────────────────────────
@@ -272,6 +272,15 @@ MODE_BY_RPC = {
     fb.RPC_GEN_VIDEO: "i2v",
     fb.RPC_GEN_VIDEO_FIRST_LAST: "first_last",
     fb.RPC_GEN_VIDEO_REFERENCES: "r2v",
+    fb.RPC_GEN_VIDEO_EXTEND: "extend_video",
+}
+
+#: Where a video RPC keeps its model key / aspect code inside the item.
+#: Everything but ingredients keeps the model at slot 1; fZytfe puts the
+#: source-clip record there and the model at slot 2.
+MODEL_SLOTS: dict[str, tuple[int, int]] = {
+    fb.RPC_GEN_VIDEO_REFERENCES: (2, 3),
+    fb.RPC_GEN_VIDEO_EXTEND: (2, 3),
 }
 
 
@@ -295,7 +304,7 @@ def model_uses(rpcid: str, inner: Any) -> list[dict]:
             item = _video_item(inner)
             if item is None:
                 return out
-            key_slot, aspect_slot = (2, 3) if rpcid == fb.RPC_GEN_VIDEO_REFERENCES else (1, 2)
+            key_slot, aspect_slot = MODEL_SLOTS.get(rpcid, (1, 2))
             key = item[key_slot] if len(item) > key_slot else None
             aspect = item[aspect_slot] if len(item) > aspect_slot else None
             if isinstance(key, str):
@@ -356,6 +365,25 @@ def rebuild(rpcid: str, inner: Any) -> Optional[str]:
     item = _video_item(inner)
     if item is None:
         return None
+
+    # Extend (fZytfe) uses a different slot layout: [sourceBlock, promptBlock,
+    # model, aspect, null, scene+ids], so handle it before the generic prompt
+    # extractor (which would look at item[0][2] → source dimensions).
+    if rpcid == fb.RPC_GEN_VIDEO_EXTEND:
+        src = str(item[0][1]) if isinstance(item[0], list) and len(item[0]) > 1 else ""
+        scene = (
+            str(item[5][0])
+            if len(item) > 5 and isinstance(item[5], list) and item[5] and isinstance(item[5][0], str)
+            else None
+        )
+        # The prompt sits in slot 1, like r2v's slot 0 — unwrap the [[[prompt]]] wrapper.
+        try:
+            prompt = item[1][2][0][0][0]
+        except (TypeError, IndexError, KeyError):
+            prompt = ""
+        model = str(item[2]) if len(item) > 2 and isinstance(item[2], str) else fb.EXTEND_VIDEO_MODEL
+        return fb.extend_video_request(prompt, project, src, scene_id=scene, model=model)
+
     prompt_block = item[0][2]
     parts = prompt_block[0] if isinstance(prompt_block, list) and prompt_block else []
     prompt_parts = [part[0] for part in parts

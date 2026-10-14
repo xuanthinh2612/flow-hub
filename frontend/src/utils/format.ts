@@ -33,6 +33,7 @@ export const TYPE_LABEL: Record<string, string> = {
   i2v: 'Ảnh → Video',
   first_last: 'Đầu + cuối',
   r2v: 'Ingredients',
+  extend_video: 'Extend video',
   upload: 'Upload',
   upscale: 'Upscale',
   template: 'Template',
