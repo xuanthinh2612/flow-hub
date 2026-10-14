@@ -2,7 +2,10 @@
 
 Flow hands back signed CDN urls that expire, so finished media is downloaded
 into data/media/. The server tries the url itself first; if Flow wants the
-browser session for it, the worker fetches the bytes and ships them over.
+browser session for it, the worker fetches the bytes and ships them over. Each
+canvas project keeps its own folder under data/media/, named after the project's
+public id, so a project's media exports as one directory; media that predates
+any project stays in data/media/ itself.
 """
 from __future__ import annotations
 
@@ -10,6 +13,7 @@ import asyncio
 import base64
 import logging
 import mimetypes
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -25,6 +29,11 @@ log = logging.getLogger("flowhub.media")
 
 EXT_BY_MIME = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif",
                "video/mp4": ".mp4", "video/webm": ".webm"}
+
+
+def _safe_name(name: str) -> str:
+    """Filesystem-safe form of a media id or project id (used as folder name)."""
+    return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name)
 
 
 def sniff_mime(data: bytes) -> str:
@@ -150,20 +159,60 @@ class MediaStore:
                 Path(row["local_path"]).unlink(missing_ok=True)
             except OSError:
                 pass
+        folder = self.project_dir(workspace_id)
+        try:
+            shutil.rmtree(folder)      # files left over (not tracked with local_path) go too
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
         self.db.execute("DELETE FROM media WHERE workspace_id=?", (workspace_id,))
         self.events.publish("media", {"workspace_id": workspace_id, "deleted_all": True})
+
+    def project_dir(self, workspace_id: str) -> Path:
+        """The folder every local copy of a project's media lives in.
+
+        Created eagerly so a fresh project already has its folder the moment
+        the board is made, and again lazily by save_bytes before any write.
+        """
+        folder = self.dir / _safe_name(workspace_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder
+
+    def media_path(self, media_id: str, workspace_id: Optional[str] = None) -> Path:
+        """Where save_bytes should put this media's file: the project folder
+        when the row (or the caller) says which project it belongs to."""
+        row = self.get(media_id)
+        workspace_id = workspace_id or (row or {}).get("workspace_id")
+        folder = self.project_dir(workspace_id) if workspace_id else self.dir
+        return folder / _safe_name(media_id)
 
     def local_file(self, media_id: str) -> Optional[Path]:
         row = self.get(media_id)
         if row and row.get("local_path") and Path(row["local_path"]).is_file():
             return Path(row["local_path"])
+        # The row may predate the folder layout (or lost its local_path); fall
+        # back to looking the file up by id in its project folder, then root.
+        mime = (row or {}).get("mime") or ""
+        ext = EXT_BY_MIME.get(mime) or mimetypes.guess_extension(mime) or ".bin"
+        safe = f"{_safe_name(media_id)}{ext}"
+        candidates = []
+        workspace_id = (row or {}).get("workspace_id")
+        if workspace_id:
+            candidates.append(self.project_dir(workspace_id) / safe)
+        candidates.append(self.dir / safe)
+        for path in candidates:
+            if path.is_file():
+                self.db.update("media", "id", media_id, {"local_path": str(path)})
+                return path
         return None
 
-    def save_bytes(self, media_id: str, data: bytes, mime: Optional[str] = None) -> Path:
+    def save_bytes(self, media_id: str, data: bytes, mime: Optional[str] = None,
+                   workspace_id: Optional[str] = None) -> Path:
         mime = mime if mime and mime != "application/octet-stream" else sniff_mime(data)
         ext = EXT_BY_MIME.get(mime) or mimetypes.guess_extension(mime) or ".bin"
-        safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in media_id)
-        path = self.dir / f"{safe}{ext}"
+        path = self.media_path(media_id, workspace_id)
+        path = path.with_suffix(ext)
         path.write_bytes(data)
         changes = {"local_path": str(path), "mime": mime, "size": len(data)}
         if mime.startswith("image/") and not (self.get(media_id) or {}).get("aspect"):

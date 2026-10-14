@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import socket
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 import httpx
@@ -68,6 +70,11 @@ class FakeFlow:
             self.n += 1
             op = f"OP-{self.n}"
             self.ops[op] = {"polls": 0, "media": f"{self.n:08d}-1111-2222-3333-444444444444", "as": 0}
+            return {"status": 200, "text": env(rpcid, [None, 50, [[op, PID, "SCENE", None]]])}
+        if rpcid == "fZytfe":                                 # extend: page style, one id for jwpduf + as29s
+            self.n += 1
+            op = f"{self.n:08d}-beef-470d-cb09-44a1bc73aaaa"
+            self.ops[op] = {"polls": 0, "media": op, "as": 0}
             return {"status": 200, "text": env(rpcid, [None, 50, [[op, PID, "SCENE", None]]])}
         if rpcid == "YhhmEf":                                 # page style: one id for jwpduf and as29s
             self.n += 1
@@ -172,7 +179,7 @@ def stack(tmp_path_factory):
     assert ready.wait(5)
     client = httpx.Client(base_url=f"http://127.0.0.1:{port}", headers={"X-API-Key": KEY}, timeout=30)
     client.patch("/api/settings", json={"poll_interval_s": 0.1, "min_submit_gap_s": 0, "download_media": False})
-    yield {"client": client, "flow": flow, "observe": sent_observe, "port": port}
+    yield {"client": client, "flow": flow, "observe": sent_observe, "port": port, "app": app}
     server.should_exit = True
 
 
@@ -280,6 +287,59 @@ def test_upload_upscale_and_preview(stack):
     assert c.get(f"/api/media/{job['results'][0]['media_id']}/file").content[:3] == b"\xff\xd8\xff"
     preview = c.post("/api/jobs/preview", json={"type": "t2v", "prompt": "x", "aspect": "16:9"}).json()
     assert preview[0]["rpcid"] == "YhhmEf" and preview[0]["inner"][0][0][1] == "veo_3_1_t2v_fast"
+
+
+def test_project_media_live_in_the_project_folder(stack):
+    """A project's media is written to data/media/<project id>/ and zips back out."""
+    c, app = stack["client"], stack["app"]
+    core = app.state.core
+    board = c.post("/api/boards", json={"name": "Project có thư mục"}).json()
+    folder = core.config.media_dir / board["public_id"]
+    assert folder.is_dir(), "creating a project creates its folder"
+
+    png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + (1024).to_bytes(4, "big") + (768).to_bytes(4, "big") + b"\x00" * 100
+    job = c.post("/api/uploads", files={"file": ("a.png", png, "image/png")},
+                 data={"workspace_id": board["public_id"]}).json()
+    job = wait_job(c, job["id"])
+    assert job["status"] == "done", job["error"]
+    row = c.get("/api/media/UPL-1").json()
+    assert row["workspace_id"] == board["public_id"]
+    assert row["local_path"].startswith(str(folder)), "the upload lands in the project folder"
+    assert folder.joinpath("UPL-1.png").is_file()
+    assert c.get("/api/media/UPL-1/file").content == png
+
+    resp = c.get(f"/api/projects/{board['public_id']}/media.zip")
+    assert resp.status_code == 200 and "zip" in resp.headers["content-type"]
+    zf = zipfile.ZipFile(io.BytesIO(resp.content))
+    assert zf.namelist() == [f"{board['public_id']}/UPL-1.png"]
+    assert zf.read(zf.namelist()[0]) == png
+
+    empty = c.post("/api/boards", json={"name": "Project trống"}).json()
+    assert c.get(f"/api/projects/{empty['public_id']}/media.zip").status_code == 404, "an empty project has nothing to zip"
+
+    # Rows from before the folder layout: local_file still finds a flat-root file
+    # and repairs the row to point at it instead of the stale local_path.
+    core.media.upsert({"id": "legacy-1", "kind": "image", "source": "upload", "mime": "image/png"})
+    core.media.save_bytes("legacy-1", png, "image/png")
+    gone = str(core.config.media_dir / "gone" / "legacy-1.png")
+    core.db.execute("UPDATE media SET workspace_id=?, local_path=? WHERE id='legacy-1'",
+                    (board["public_id"], gone))
+    found = core.media.local_file("legacy-1")
+    assert found == core.config.media_dir / "legacy-1.png", "legacy flat media still resolves"
+    assert core.media.get("legacy-1")["local_path"] == str(found), "the row is repaired"
+
+    # The other direction: a row that lost its local_path but whose file already
+    # sits in the project folder is found there.
+    core.media.upsert({"id": "legacy-2", "kind": "image", "source": "upload",
+                      "mime": "image/png", "workspace_id": board["public_id"]})
+    core.media.save_bytes("legacy-2", png, "image/png")
+    core.db.execute("UPDATE media SET local_path=NULL WHERE id='legacy-2'")
+    found = core.media.local_file("legacy-2")
+    assert found == folder / "legacy-2.png"
+    assert core.media.get("legacy-2")["local_path"] == str(found)
+
+    assert c.delete(f"/api/boards/{board['id']}").status_code == 200
+    assert not folder.is_dir(), "deleting the project removes its folder"
 
 
 def test_observation_learns_and_templates(stack):

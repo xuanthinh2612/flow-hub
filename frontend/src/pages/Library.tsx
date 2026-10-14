@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { api, invalidateMedia } from '../api/client';
+import { api, invalidateMedia, projectMediaZipUrl } from '../api/client';
 import { MediaItem } from '../api/types';
 import { ago } from '../utils/format';
 import { MediaVisual } from '../components/MediaVisual';
@@ -129,9 +129,16 @@ export const LibraryPage: React.FC = () => {
             {workspaceId !== null && ' làm tham chiếu.'}
           </p>
         </div>
-        <button type="button" className="btn btn-sm btn-danger" onClick={handleClearAll}>
-          Xóa toàn bộ
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {workspaceId !== null && (
+            <a className="btn btn-sm" href={projectMediaZipUrl(String(workspaceId))}>
+              Tải toàn bộ project (.zip)
+            </a>
+          )}
+          <button type="button" className="btn btn-sm btn-danger" onClick={handleClearAll}>
+            Xóa toàn bộ
+          </button>
+        </div>
       </div>
 
       <div className="card">

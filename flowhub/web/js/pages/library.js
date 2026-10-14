@@ -32,6 +32,7 @@ export async function openMedia(mediaId) {
     h('dl', { class: 'kv', style: { marginTop: '10px' } },
       row('Media ID', m.id), row('Nguồn', m.source), row('Model', m.model), row('Prompt', m.prompt),
       row('Tỉ lệ', m.aspect), row('Job', m.job_id), row('File trên server', m.local_path ? `${m.mime} · ${Math.round((m.size || 0) / 1024)} KB` : 'chưa tải về'),
+      row('Thư mục project', m.workspace_id ? `data/media/${m.workspace_id}/` : null),
       row('Tạo lúc', m.created_at ? new Date(m.created_at * 1000).toLocaleString('vi-VN') : ''), row('Ghi chú', m.note)),
     h('div', { class: 'actions' },
       h('button', { class: 'btn btn-sm', onclick: () => copy(m.id, 'Đã copy media ID') }, 'Copy media ID'),

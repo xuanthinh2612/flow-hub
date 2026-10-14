@@ -345,7 +345,7 @@ def _import_assets(core: Any, workspace_id: str, node: dict) -> list[str]:
             "aspect": image_aspect(asset["bytes"]),
             "workspace_id": workspace_id,
         })
-        core.media.save_bytes(media_id, asset["bytes"], asset["mime_type"])
+        core.media.save_bytes(media_id, asset["bytes"], asset["mime_type"], workspace_id=workspace_id)
         media_ids.append(media_id)
     return media_ids
 
@@ -381,6 +381,7 @@ def import_canvas_project(core: Any, payload: Any) -> dict:
             "FROM canvas_boards WHERE id=?",
             (board_id,),
         )
+        core.media.project_dir(public_id)
 
         # Original id -> row id. Edges are rewritten through this map, so they
         # can only ever point at a node of the project being imported.

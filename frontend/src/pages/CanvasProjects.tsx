@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Copy, Download, Pencil, Upload } from 'lucide-react';
 import { createBoard, deleteBoard, listBoards, patchBoard, type Board } from '../store/boardApi';
 import { useToast } from '../context/ToastContext';
-import { api } from '../api/client';
+import { api, projectMediaZipUrl } from '../api/client';
 import type { WorkerInfo } from '../api/types';
 import { exportCanvasProjectJson } from '../services/canvasProjectJson';
 import { importCanvasProjectJson } from '../services/canvasProjectImport';
@@ -223,6 +223,13 @@ export const CanvasProjectsPage: React.FC = () => {
                 </select>
               </label>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
+                <a
+                  className="btn btn-sm"
+                  href={projectMediaZipUrl(project.public_id)}
+                  title="Tải toàn bộ ảnh / video của project thành file zip"
+                >
+                  Export media
+                </a>
                 <button type="button" className="btn btn-sm" disabled={exporting === project.id} onClick={() => void exportProject(project)} title="Tải cấu hình node và liên kết thành JSON">
                   <Download size={14} /> {exporting === project.id ? 'Đang xuất…' : 'Export JSON'}
                 </button>

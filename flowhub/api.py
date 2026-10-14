@@ -8,13 +8,16 @@ from __future__ import annotations
 import base64
 from copy import deepcopy
 import json
+import os
 import secrets
 import string
+import tempfile
 import time
+import zipfile
 from typing import Any, Literal, Optional
 
 from fastapi.security import APIKeyHeader
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -124,11 +127,13 @@ async def list_canvas_boards(request: Request):
 
 @api.post("/boards", tags=["canvas"], status_code=201)
 async def create_canvas_board(body: CanvasBoardCreate, request: Request):
-    db = core_of(request).db
+    core = core_of(request)
+    db = core.db
     public_id = _new_project_id()
     board_id = db.insert("canvas_boards", {"name": body.name, "project_id": body.project_id,
                                              "public_id": public_id, "created_at": time.time(),
                                              "viewport": body.viewport})
+    core.media.project_dir(public_id)
     if db.one("SELECT COUNT(*) AS n FROM canvas_boards")["n"] == 1:
         db.execute("UPDATE jobs SET workspace_id=? WHERE workspace_id IS NULL", (public_id,))
         db.execute("UPDATE media SET workspace_id=? WHERE workspace_id IS NULL", (public_id,))
@@ -223,6 +228,38 @@ async def delete_canvas_board(board_id: int, request: Request):
     return {"ok": True}
 
 
+def _remove_file(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+@api.get("/projects/{public_id}/media.zip", tags=["canvas"])
+async def export_project_media(public_id: str, request: Request, background: BackgroundTasks):
+    """Bulk export: every local media file of the project, zipped.
+
+    The project id is the folder name under data/media, so the zip mirrors the
+    folder layout. It is spooled to a temp file (videos are big) and removed
+    once the download has been sent.
+    """
+    core = core_of(request)
+    project = core.db.one("SELECT id, public_id, name FROM canvas_boards WHERE public_id=?", (public_id,))
+    if not project:
+        raise HTTPException(404, "không tìm thấy project")
+    folder = core.media.project_dir(project["public_id"])
+    if not any(path.is_file() for path in folder.iterdir()):
+        raise HTTPException(404, "project chưa có media nào")
+    fd, tmp = tempfile.mkstemp(suffix=".zip", prefix="media-export-")
+    os.close(fd)
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(folder.iterdir()):
+            if path.is_file():
+                zf.write(path, arcname=f"{project['public_id']}/{path.name}")
+    background.add_task(_remove_file, tmp)
+    return FileResponse(tmp, media_type="application/zip", filename=f"{project['public_id']}-media.zip")
+
+
 @api.post("/boards/import", tags=["canvas"])
 async def import_canvas_localstorage(body: CanvasBoardImport, request: Request):
     """One-time migration endpoint for boards stored by older browser builds."""
@@ -233,9 +270,11 @@ async def import_canvas_localstorage(body: CanvasBoardImport, request: Request):
             id_map: dict[int, int] = {}
             for b in body.boards:
                 old_id = int(b.get("id", 0))
+                public_id = _new_project_id()
                 db.execute("INSERT INTO canvas_boards(id,name,project_id,public_id,created_at) VALUES(?,?,?,?,?)",
                            (old_id or None, b.get("name") or "Untitled", b.get("project_id") or "default",
-                            _new_project_id(), time.time()))
+                            public_id, time.time()))
+                core_of(request).media.project_dir(public_id)
                 new_id = old_id or db.one("SELECT last_insert_rowid() AS id")["id"]
                 id_map[old_id] = new_id
             for n in body.nodes:

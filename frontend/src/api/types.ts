@@ -113,6 +113,7 @@ export interface MediaItem {
   size?: number;
   created_at?: number;
   note?: string;
+  workspace_id?: string | null;
 }
 
 export interface ModelVariant {

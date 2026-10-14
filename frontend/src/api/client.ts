@@ -32,6 +32,9 @@ export function withKey(url: string): string {
 
 export const mediaFile = (id: string): string => withKey(`/api/media/${encodeURIComponent(id)}/file`);
 
+export const projectMediaZipUrl = (publicId: string): string =>
+  withKey(`/api/projects/${encodeURIComponent(publicId)}/media.zip`);
+
 export async function api<T = any>(
   path: string,
   { method = 'GET', body, form, keepalive = false }: { method?: string; body?: any; form?: FormData; keepalive?: boolean } = {}

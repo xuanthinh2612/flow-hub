@@ -43,10 +43,10 @@ if TYPE_CHECKING:
 log = logging.getLogger("flowhub.jobs")
 
 IMAGE_TYPES = {"image", "character", "edit"}
-VIDEO_TYPES = {"t2v", "i2v", "first_last", "r2v"}
+VIDEO_TYPES = {"t2v", "i2v", "first_last", "r2v", "extend_video"}
 TYPES = IMAGE_TYPES | VIDEO_TYPES | {"upload", "upscale", "template"}
 MODE_BY_TYPE = {"image": "image", "character": "image", "edit": "image", "t2v": "t2v", "i2v": "i2v",
-                "first_last": "first_last", "r2v": "r2v"}
+                "first_last": "first_last", "r2v": "r2v", "extend_video": "extend_video"}
 ACTIVE = {"queued", "running", "polling"}
 TERMINAL = {"done", "partial", "failed", "timeout", "canceled"}
 
@@ -202,6 +202,11 @@ class JobEngine:
         s["extract_video_ids"] = [str(m) for m in (s.get("extract_video_ids") or []) if m]
         if kind == "r2v" and not refs and not s["extract_video_ids"] and not s.get("canvas_dependencies"):
             raise ValueError("r2v cần ít nhất 1 ref_media_ids")
+        if kind == "extend_video" and not (s.get("source_media_id") or s.get("media_id")):
+            raise ValueError("extend_video cần source_media_id (video để kéo dài)")
+        # Normalise aliases: accept media_id as source_media_id for compatibility.
+        if kind == "extend_video" and not s.get("source_media_id") and s.get("media_id"):
+            s["source_media_id"] = s["media_id"]
         if s["extract_video_ids"] or s.get("extract_start_video_id"):
             s["stage"] = "extracting_frames"
             s["extracted_video_frames"] = {}
@@ -271,6 +276,17 @@ class JobEngine:
                 calls.append(Call(f"ingredients #{n + 1}", fb.RPC_GEN_VIDEO_REFERENCES, captcha=cap(fb.RPC_GEN_VIDEO_REFERENCES),
                                   build=lambda: fb.reference_video_request(prompt, project_id, s["ref_media_ids"],
                                                                            s["aspect_code"], model, names)))
+        elif kind == "extend_video":
+            # fZytfe: continue an existing clip. Flow's page puts the source
+            # clip first and the prompt second, and echoes the scene id when
+            # it has one; Flow Hub forwards scene_id when the form supplies it.
+            source = str(s["source_media_id"])
+            scene = s.get("scene_id") or None
+            for n in range(s["count"]):
+                calls.append(Call(f"extend #{n + 1}", fb.RPC_GEN_VIDEO_EXTEND, captcha=cap(fb.RPC_GEN_VIDEO_EXTEND),
+                                  text=prompt,
+                                  build=lambda: fb.extend_video_request(prompt, project_id, source,
+                                                                        scene_id=scene, model=model)))
         elif kind == "upscale":
             calls.append(Call(s["resolution"], fb.RPC_UPSCALE_IMAGE, captcha=cap(fb.RPC_UPSCALE_IMAGE),
                               build=lambda: fb.upscale_request(s["media_id"], s["resolution"])))
@@ -802,7 +818,7 @@ class JobEngine:
         self.media.upsert({"id": uploaded_id, "kind": "image", "url": urls[1] if urls else None,
                            "prompt": file_name, "source": "video_frame", "job_id": job["id"],
                            "workspace_id": workspace_id})
-        self.media.save_bytes(uploaded_id, data, "image/png")
+        self.media.save_bytes(uploaded_id, data, "image/png", workspace_id=workspace_id)
         return uploaded_id
 
     async def _run_images(self, job: dict, worker: "Worker", calls: list[Call], project_id: str) -> None:
@@ -1025,7 +1041,8 @@ class JobEngine:
         self.media.upsert({"id": media_id, "kind": "image", "url": url, "prompt": s.get("file_name"), "source": "upload",
                            "job_id": job["id"], "aspect": image_aspect(data),
                            "workspace_id": job.get("workspace_id", s.get("workspace_id"))})
-        self.media.save_bytes(media_id, data, s.get("mime_type"))
+        self.media.save_bytes(media_id, data, s.get("mime_type"),
+                              workspace_id=job.get("workspace_id", s.get("workspace_id")))
         job["results"].append({"kind": "image", "media_id": media_id, "url": url})
         self._finish(job, 1, 1, None)
 
@@ -1037,7 +1054,8 @@ class JobEngine:
         self.media.upsert({"id": new_id, "kind": "image", "prompt": source.get("prompt"), "source": "upscale",
                            "job_id": job["id"], "note": f"Upscale {s['resolution']} của {s['media_id']}",
                            "workspace_id": s.get("workspace_id", source.get("workspace_id"))})
-        self.media.save_bytes(new_id, base64.b64decode(encoded))
+        self.media.save_bytes(new_id, base64.b64decode(encoded),
+                              workspace_id=s.get("workspace_id", source.get("workspace_id")))
         job["results"].append({"kind": "image", "media_id": new_id, "local": True})
         self._finish(job, 1, 1, None)
 
@@ -1051,7 +1069,8 @@ class JobEngine:
             for media_id, url in images:
                 job["results"].append({"kind": "image", "media_id": media_id, "url": url})
                 self.media.upsert({"id": media_id, "kind": "image", "url": url, "prompt": job["spec"].get("prompt"),
-                                   "source": "template", "job_id": job["id"]})
+                                   "source": "template", "job_id": job["id"],
+                                   "workspace_id": job.get("workspace_id", job["spec"].get("workspace_id"))})
                 self._download(media_id)
             return self._finish(job, len(images), 1, "template không trả về ảnh")
         if kind == "video":

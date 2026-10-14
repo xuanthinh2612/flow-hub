@@ -6,13 +6,25 @@ import { useModal } from '../context/ModalContext';
 import { addMediaToForm } from '../utils/storage';
 import { useNavigate } from 'react-router-dom';
 
-const USES = [
+type UseTarget = {
+  label: string;
+  page: 'image' | 'character' | 'video';
+  field: string;
+  multi?: boolean;
+  patch?: any;
+};
+
+const USES: UseTarget[] = [
   { label: 'Tham chiếu cho Ảnh', page: 'image' as const, field: 'refs' },
   { label: 'Ảnh gốc để sửa', page: 'image' as const, field: 'base', multi: false, patch: { mode: 'edit' } },
   { label: 'Ảnh đầu (Ảnh → Video)', page: 'video' as const, field: 'starts', patch: { mode: 'i2v' } },
   { label: 'Ảnh đầu (đầu + cuối)', page: 'video' as const, field: 'start', multi: false, patch: { mode: 'first_last' } },
   { label: 'Ảnh cuối (đầu + cuối)', page: 'video' as const, field: 'end', multi: false, patch: { mode: 'first_last' } },
   { label: 'Ingredient (r2v)', page: 'video' as const, field: 'refs', patch: { mode: 'r2v' } },
+];
+
+const VIDEO_USES: UseTarget[] = [
+  { label: 'Video để kéo dài (extend, fZytfe)', page: 'video' as const, field: 'extend', multi: false, patch: { mode: 'extend_video' } },
 ];
 
 export const MediaModalContent: React.FC<{ mediaId: string; onDeleted?: () => void }> = ({
@@ -83,7 +95,7 @@ export const MediaModalContent: React.FC<{ mediaId: string; onDeleted?: () => vo
     }
   };
 
-  const handleUseIn = (u: (typeof USES)[0]) => {
+  const handleUseIn = (u: UseTarget) => {
     addMediaToForm(u.page, u.field, media.id, { multi: u.multi !== false, patch: u.patch });
     closeModal();
     navigate(`/${u.page}`);
@@ -137,6 +149,12 @@ export const MediaModalContent: React.FC<{ mediaId: string; onDeleted?: () => vo
             ? `${media.mime || ''} · ${Math.round((media.size || 0) / 1024)} KB`
             : 'chưa tải về'}
         </dd>
+        {media.workspace_id && (
+          <>
+            <dt>Thư mục project</dt>
+            <dd className="mono">data/media/{media.workspace_id}/</dd>
+          </>
+        )}
         {media.created_at && (
           <>
             <dt>Tạo lúc</dt>
@@ -189,6 +207,19 @@ export const MediaModalContent: React.FC<{ mediaId: string; onDeleted?: () => vo
             <button type="button" className="btn btn-sm" onClick={() => handleUpscale('4K')}>
               Upscale 4K
             </button>
+          </div>
+        </>
+      )}
+
+      {isVideo && (
+        <>
+          <div className="section-title">Dùng cho</div>
+          <div className="actions">
+            {VIDEO_USES.map((u, i) => (
+              <button key={i} type="button" className="btn btn-sm" onClick={() => handleUseIn(u)}>
+                {u.label}
+              </button>
+            ))}
           </div>
         </>
       )}
