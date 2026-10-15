@@ -257,12 +257,13 @@ def test_import_lays_the_canvas_out_without_overlap(client):
     boxes = [(node["x"], node["y"]) for node in nodes]
     assert len(set(boxes)) == len(boxes), "two nodes share the same origin"
 
-    # node-001 -> node-002 -> node-004 -> node-005 is a chain, so the cards
-    # must march left to right; node-006 feeds node-005 from the same side.
+    # Nodes at the same graph depth share a row and spread horizontally.
+    # Dependency depth advances downward, so this chain advances top to bottom.
     by_short_id = {node["short_id"]: node for node in nodes}
-    assert by_short_id["node-001"]["x"] < by_short_id["node-002"]["x"] < by_short_id["node-004"]["x"]
-    assert by_short_id["node-004"]["x"] < by_short_id["node-005"]["x"]
-    assert by_short_id["node-006"]["x"] < by_short_id["node-005"]["x"]
+    assert by_short_id["node-001"]["y"] < by_short_id["node-002"]["y"] < by_short_id["node-004"]["y"]
+    assert by_short_id["node-004"]["y"] < by_short_id["node-005"]["y"]
+    assert by_short_id["node-006"]["y"] == by_short_id["node-001"]["y"]
+    assert by_short_id["node-006"]["x"] != by_short_id["node-001"]["x"]
 
 
 def test_import_keeps_existing_projects_working(client):

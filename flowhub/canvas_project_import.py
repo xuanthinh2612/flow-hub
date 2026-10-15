@@ -64,10 +64,9 @@ GENERATION_KEY_MAP = {
     "independent_video_mode": "independentVideoMode",
 }
 
-# Canvas cards are ~280x220 px. The layout below is computed once, at import
-# time, and stored in the same x/y columns a hand-built project uses — so the
-# diagram looks identical on every reopen instead of being re-laid-out by the
-# browser.
+# Canvas cards are ~280x220 px. The layout is computed once at import:
+# dependency depth forms rows, and nodes at the same depth sit side by side.
+# Stored coordinates keep the diagram stable on every reopen.
 NODE_WIDTH = 280
 NODE_HEIGHT = 220
 COLUMN_GAP = 140
@@ -281,7 +280,7 @@ def _build_node_data(node: dict) -> dict:
 
 
 def _layered_layout(nodes: list[dict], edges: list[dict]) -> dict[str, tuple[float, float]]:
-    """Deterministic left-to-right layout, one column per graph depth."""
+    """Deterministic top-to-bottom layout, with peers side by side per depth."""
     predecessors: dict[str, list[str]] = {node["id"]: [] for node in nodes}
     for edge in edges:
         predecessors[edge["target"]].append(edge["source"])
@@ -307,8 +306,8 @@ def _layered_layout(nodes: list[dict], edges: list[dict]) -> dict[str, tuple[flo
         rows.setdefault(layer[node["id"]], []).append(node["id"])
 
     positions: dict[str, tuple[float, float]] = {}
-    for column in sorted(rows):
-        for row, node_id in enumerate(rows[column]):
+    for row, node_ids in sorted(rows.items()):
+        for column, node_id in enumerate(node_ids):
             positions[node_id] = (
                 ORIGIN_X + column * (NODE_WIDTH + COLUMN_GAP),
                 ORIGIN_Y + row * (NODE_HEIGHT + ROW_GAP),
