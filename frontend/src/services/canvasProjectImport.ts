@@ -1,5 +1,6 @@
 import { api } from '../api/client';
 import type { Board } from '../store/boardApi';
+import { isAutoGenEnabled } from './autoGen';
 
 const SUPPORTED_FORMAT = 'flow-hub-canvas-project';
 const SUPPORTED_FORMAT_VERSION = 1;
@@ -8,6 +9,7 @@ export interface CanvasProjectImportResult {
   board: Board;
   nodeCount: number;
   edgeCount: number;
+  autoGen: boolean;
 }
 
 /**
@@ -55,5 +57,8 @@ export async function importCanvasProjectJson(file: File): Promise<CanvasProject
     board: result.board,
     nodeCount: result.imported?.nodes ?? 0,
     edgeCount: result.imported?.edges ?? 0,
+    // Opt in only for the literal boolean true. Missing or malformed values
+    // keep the legacy import behavior and can never trigger a run.
+    autoGen: isAutoGenEnabled(document.auto_gen),
   };
 }

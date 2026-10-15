@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import '../canvas-styles.css';
 import '@xyflow/react/dist/style.css';
 import { ReactFlowProvider } from '@xyflow/react';
@@ -14,6 +14,11 @@ import { getBoardByPublicId } from '../store/boardApi';
 export const CanvasVideoCreatePage: React.FC = () => {
   const { projectId: routeProjectId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  // Consume the import request after the board and its dependency graph have
+  // been loaded. Refs keep this one-shot across renders and Strict Mode replay.
+  const autoGenRequested = useRef(location.state?.autoGen === true);
+  const autoRunStarted = useRef(false);
   const loadInitialBoard = useBoardStore((s) => s.loadInitialBoard);
   const loading = useBoardStore((s) => s.loading);
   const boardId = useBoardStore((s) => s.boardId);
@@ -54,15 +59,29 @@ export const CanvasVideoCreatePage: React.FC = () => {
       navigate('/canvas', { replace: true });
       return () => { active = false; };
     }
-    getBoardByPublicId(routeProjectId).then((project) => {
+    getBoardByPublicId(routeProjectId).then(async (project) => {
       if (!active) return;
-      if (project) void loadInitialBoard(project.id);
-      else navigate('/canvas', { replace: true });
+      if (!project) {
+        navigate('/canvas', { replace: true });
+        return;
+      }
+      await loadInitialBoard(project.id);
+      if (!active || !autoGenRequested.current || autoRunStarted.current) return;
+
+      const loadedBoard = useBoardStore.getState();
+      if (loadedBoard.loading || loadedBoard.boardId !== project.id) return;
+
+      // Clear transient navigation state and mark it consumed before invoking
+      // the same Run All action the canvas toolbar calls.
+      autoRunStarted.current = true;
+      autoGenRequested.current = false;
+      navigate(location.pathname, { replace: true, state: null });
+      await useGenerationStore.getState().runAll();
     }).catch(() => {
       if (active) navigate('/canvas', { replace: true });
     });
     return () => { active = false; };
-  }, [loadInitialBoard, navigate, routeProjectId]);
+  }, [loadInitialBoard, location.pathname, navigate, routeProjectId]);
 
   return (
     <ReactFlowProvider>

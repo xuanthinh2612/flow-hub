@@ -142,9 +142,9 @@ export const CanvasProjectsPage: React.FC = () => {
     if (!file) return;
     setImporting(true);
     try {
-      const { board, nodeCount, edgeCount } = await importCanvasProjectJson(file);
+      const { board, nodeCount, edgeCount, autoGen } = await importCanvasProjectJson(file);
       toast(`\u0110\u00e3 import project “${board.name}” (${nodeCount} node, ${edgeCount} li\u00ean k\u1ebft)`, 'ok');
-      navigate(`/canvas/${board.public_id}`);
+      navigate(`/canvas/${board.public_id}`, { state: autoGen ? { autoGen: true } : null });
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Kh\u00f4ng import \u0111\u01b0\u1ee3c project', 'err');
     } finally {
