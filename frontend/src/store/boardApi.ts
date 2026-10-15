@@ -208,6 +208,19 @@ export async function createRequest(input: {
       aspect: params.aspect_ratio === "VIDEO_ASPECT_RATIO_PORTRAIT" ? "9:16" : "16:9",
       count: Number(params.variant_count) || 1,
     };
+  } else if (type === "gen_video_video_reference") {
+    // Edit one clip against a video reference (jIps6 / "abra_edit"). Omni
+    // Flash only; `model` is left to the backend catalog so the wire id
+    // (abra_edit) stays in one place.
+    spec = {
+      type: "video_reference",
+      family: "omni_flash",
+      prompt: params.prompt,
+      source_media_id: params.source_media_id,
+      ref_media_ids: params.ref_media_ids || [],
+      aspect: params.aspect_ratio === "VIDEO_ASPECT_RATIO_PORTRAIT" ? "9:16" : "16:9",
+      count: Number(params.variant_count) || 1,
+    };
   } else {
     spec = {
       type: "image",

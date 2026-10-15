@@ -26,8 +26,9 @@ function exactVideoModel(model: ExportModel | null, videoMode: unknown, aspectRa
   return { ...model, id };
 }
 
-function videoModeForNode(node: ExportNode, config: Record<string, unknown>, edges: Array<{ source_id: number; target_id: number }>, nodesById: Map<string, ExportNode>): 't2v' | 'i2v' | 'r2v' {
-  if (config.videoMode === 't2v' || config.videoMode === 'i2v' || config.videoMode === 'r2v') return config.videoMode;
+function videoModeForNode(node: ExportNode, config: Record<string, unknown>, edges: Array<{ source_id: number; target_id: number }>, nodesById: Map<string, ExportNode>): 't2v' | 'i2v' | 'r2v' | 'video_reference' {
+  if (config.videoMode === 't2v' || config.videoMode === 'i2v' || config.videoMode === 'r2v'
+    || config.videoMode === 'video_reference') return config.videoMode;
   const incoming = edges.filter((edge) => String(edge.target_id) === String(node.id));
   if (!incoming.length) return 't2v';
   return incoming.some((edge) => nodesById.get(String(edge.source_id))?.type === 'video') ? 'r2v' : 'i2v';
@@ -112,6 +113,12 @@ export async function exportCanvasProjectJson(project: Board): Promise<number> {
       ...(node.type === 'video' ? { camera: config.camera === 'dynamic' ? 'dynamic' : 'static' } : {}),
       ...(typeof config.operation === 'string' ? { operation: config.operation } : {}),
       ...(node.type === 'video' ? { video_mode: rawVideoMode } : {}),
+      // jIps6 "video reference": the clip the edit rewrites. Kept as a plain
+      // setting rather than a canvas edge so an upload (not a node's output)
+      // still round-trips; the backend revalidates the media on import.
+      ...(node.type === 'video' && config.videoReference && typeof config.videoReference === 'object'
+        ? { video_reference: config.videoReference }
+        : {}),
       ...(Array.isArray(config.prompts) ? { prompts: config.prompts } : {}),
       ...(node.type === 'Storyboard' && config.storyboardGrid ? { storyboard_grid: config.storyboardGrid } : {}),
       ...(node.type === 'video' && Array.isArray(config.selectedSourceIdx)

@@ -36,6 +36,7 @@ export const TYPE_LABEL: Record<string, string> = {
   first_last: 'Đầu + cuối',
   r2v: 'Ingredients',
   extend_video: 'Extend video',
+  video_reference: 'Video reference',
   upload: 'Upload',
   upscale: 'Upscale',
   template: 'Template',

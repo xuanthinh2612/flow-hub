@@ -1439,7 +1439,9 @@ export function NodeCard(props: NodeProps<FlowNode>) {
         <span className="node-title">{data.title}</span>
         {videoInfo && (() => {
           let displayMode: string = videoInfo.mode;
-          if (videoInfo.mode === "t2v") {
+          if (data.generation?.videoMode === "video_reference") {
+            displayMode = "video_reference";
+          } else if (videoInfo.mode === "t2v") {
             const independentMediaIds = data.generation?.independentVideoMediaIds as string[] | undefined;
             const independentVideoMode = data.generation?.independentVideoMode as string | undefined;
             if (independentMediaIds && independentMediaIds.length > 1) {
@@ -1464,9 +1466,9 @@ export function NodeCard(props: NodeProps<FlowNode>) {
           return (
             <span
               className={`video-mode-pill video-mode-pill--${displayMode}`}
-              title={videoInfo.label}
+              title={displayMode === "video_reference" ? "Tham chiếu video (jIps6)" : videoInfo.label}
             >
-              {displayMode}
+              {displayMode === "video_reference" ? "video ref" : displayMode}
             </span>
           );
         })()}

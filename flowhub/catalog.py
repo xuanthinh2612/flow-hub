@@ -17,6 +17,7 @@ import re
 from typing import Any, Optional
 
 from .db import DB, now
+from .protocol.batch import VIDEO_REFERENCE_OPERATION
 
 MODES = {
     "image": "Ảnh (ogiZ0b)",
@@ -25,6 +26,7 @@ MODES = {
     "first_last": "Ảnh đầu + cuối (nprQif)",
     "r2v": "Ingredients (MZZa6b)",
     "extend_video": "Extend video (fZytfe)",
+    "video_reference": "Video reference (jIps6)",
 }
 
 _V = "verified"
@@ -85,6 +87,13 @@ def _seed_rows() -> list[dict]:
 
     add("extend_video", "veo_3_1_extension_lite", "Veo 3.1 Extension Lite", "veo_3_1_extension_lite",
         aspect="landscape", status=_V, note=_OBS + " (fZytfe, kéo dài clip đã có)", default=True, sort=10)
+
+    # jIps6 / "abra_edit": edit an existing clip guided by a video reference.
+    # Unlike every other Omni row the operation name carries neither duration
+    # nor resolution, so the row stays generic on all three attributes —
+    # `resolve` then picks it whatever the picker sent.
+    add("video_reference", "omni_flash", "Omni Flash (chỉnh bằng video tham chiếu)", VIDEO_REFERENCE_OPERATION,
+        status=_U, note="Suy ra từ capture jIps6 (chưa verify)", default=True, sort=10)
     return rows
 
 

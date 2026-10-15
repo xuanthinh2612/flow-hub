@@ -24,7 +24,7 @@ USER_AGENT = re.compile(r"^Mozilla/\d")
 
 #: RPCs whose body Flow Hub builds itself — the ones worth a builder check.
 BUILT_RPCS = {fb.RPC_GEN_IMAGE, fb.RPC_GEN_VIDEO, fb.RPC_GEN_VIDEO_TEXT, fb.RPC_GEN_VIDEO_FIRST_LAST,
-              fb.RPC_GEN_VIDEO_REFERENCES, fb.RPC_GEN_VIDEO_EXTEND}
+              fb.RPC_GEN_VIDEO_REFERENCES, fb.RPC_GEN_VIDEO_EXTEND, fb.RPC_VIDEO_REFERENCE}
 
 
 # ── decoding ────────────────────────────────────────────────────────────────
@@ -273,14 +273,16 @@ MODE_BY_RPC = {
     fb.RPC_GEN_VIDEO_FIRST_LAST: "first_last",
     fb.RPC_GEN_VIDEO_REFERENCES: "r2v",
     fb.RPC_GEN_VIDEO_EXTEND: "extend_video",
+    fb.RPC_VIDEO_REFERENCE: "video_reference",
 }
 
 #: Where a video RPC keeps its model key / aspect code inside the item.
-#: Everything but ingredients keeps the model at slot 1; fZytfe puts the
+#: Everything but ingredients keeps the model at slot 1; fZytfe and jIps6 put the
 #: source-clip record there and the model at slot 2.
 MODEL_SLOTS: dict[str, tuple[int, int]] = {
     fb.RPC_GEN_VIDEO_REFERENCES: (2, 3),
     fb.RPC_GEN_VIDEO_EXTEND: (2, 3),
+    fb.RPC_VIDEO_REFERENCE: (2, 3),
 }
 
 
@@ -383,6 +385,22 @@ def rebuild(rpcid: str, inner: Any) -> Optional[str]:
             prompt = ""
         model = str(item[2]) if len(item) > 2 and isinstance(item[2], str) else fb.EXTEND_VIDEO_MODEL
         return fb.extend_video_request(prompt, project, src, scene_id=scene, model=model)
+
+    # Video reference (jIps6) is the other source-first layout: [videoBlock,
+    # promptBlock, model, aspect, ids, null, null, null, imageRefs] — handle it
+    # before the generic prompt extractor (which would look at item[0][2] →
+    # source dimensions).
+    if rpcid == fb.RPC_VIDEO_REFERENCE:
+        src = str(item[0][1]) if isinstance(item[0], list) and len(item[0]) > 1 else ""
+        try:
+            prompt = item[1][2][0][0][0]
+        except (TypeError, IndexError, KeyError):
+            prompt = ""
+        model = str(item[2]) if len(item) > 2 and isinstance(item[2], str) else fb.VIDEO_REFERENCE_OPERATION
+        aspect = item[3] if len(item) > 3 and isinstance(item[3], int) else fb.VIDEO_LANDSCAPE
+        raw_refs = item[8] if len(item) > 8 and isinstance(item[8], list) else []
+        refs = [r[1] for r in raw_refs if isinstance(r, list) and len(r) > 1 and isinstance(r[1], str)]
+        return fb.video_reference_request(prompt, project, src, aspect, model, refs or None)
 
     prompt_block = item[0][2]
     parts = prompt_block[0] if isinstance(prompt_block, list) and prompt_block else []

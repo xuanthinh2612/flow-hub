@@ -48,7 +48,7 @@ export interface CharacterFormState {
 }
 
 export interface VideoFormState {
-  mode: 't2v' | 'i2v' | 'first_last' | 'r2v' | 'extend_video';
+  mode: 't2v' | 'i2v' | 'first_last' | 'r2v' | 'extend_video' | 'video_reference';
   prompt: string;
   families: Record<string, string | null>;
   customModel: string;
@@ -63,6 +63,8 @@ export interface VideoFormState {
   refs: string[];
   /** extend_video: video trong thư viện cần kéo dài */
   extend: string | null;
+  /** video_reference (jIps6): media id của clip tham chiếu — đúng 1 video */
+  videoReference: string | null;
   /** extend_video: scene uuid của Flow (tùy chọn) */
   sceneId: string;
   timeoutMin: number;
@@ -115,6 +117,7 @@ export const DEFAULTS: {
     end: null,
     refs: [],
     extend: null,
+    videoReference: null,
     sceneId: '',
     timeoutMin: 10,
   },
@@ -137,6 +140,7 @@ const pageOfType: Record<string, 'image' | 'character' | 'video'> = {
   first_last: 'video',
   r2v: 'video',
   extend_video: 'video',
+  video_reference: 'video',
 };
 
 /** Put a past job's spec back into its form ("Dùng lại"). Returns the page name. */
@@ -188,6 +192,7 @@ export function reuseSpec(spec: any): 'image' | 'character' | 'video' | null {
       end: spec.end_media_id || null,
       refs: spec.ref_media_ids || [],
       extend: spec.source_media_id || spec.media_id || null,
+      videoReference: spec.type === 'video_reference' ? (spec.source_media_id || spec.media_id || null) : null,
       sceneId: spec.scene_id || '',
       timeoutMin: spec.timeout_s ? Math.round(spec.timeout_s / 60) : form.timeoutMin,
       useCustom: !spec.family,

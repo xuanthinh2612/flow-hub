@@ -5964,6 +5964,11 @@ button:disabled {
   color: #fb923c;
   border: 1px solid rgba(249, 115, 22, 0.35);
 }
+.video-mode-pill--video_reference {
+  background: rgba(6, 182, 212, 0.18);
+  color: #22d3ee;
+  border: 1px solid rgba(6, 182, 212, 0.35);
+}
 
 .gen-dialog__mode-badge {
   font-size: 11px;

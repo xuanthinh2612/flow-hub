@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 RESULT_KIND_BY_RPC = {fb.RPC_GEN_IMAGE: "image", fb.RPC_GEN_VIDEO: "video", fb.RPC_GEN_VIDEO_TEXT: "video",
                       fb.RPC_GEN_VIDEO_FIRST_LAST: "video", fb.RPC_GEN_VIDEO_REFERENCES: "video",
-                      fb.RPC_GEN_VIDEO_EXTEND: "video"}
+                      fb.RPC_GEN_VIDEO_EXTEND: "video", fb.RPC_VIDEO_REFERENCE: "video"}
 
 
 def placeholders(node, out: Optional[dict] = None) -> list[str]:

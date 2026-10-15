@@ -26,6 +26,7 @@ import {
   mediaUrl,
   patchEdge,
   patchNode,
+  uploadImage,
 } from "../canvas/canvasApi";
 import {
   getVideoUpstreamInfo,
@@ -284,6 +285,8 @@ type GenerationFormState = {
    *  "extend" = call fZytfe Veo Extension Lite. */
   videoExtendMode: "continuation" | "extend";
   r2vAdditionalMediaIds: string[];
+  omniVideoMode?: "default" | "video_reference";
+  videoReferenceMediaId?: string | null;
   backend: MediaProviderKey;
   imageModel: ImageModelKey;
   videoModel: VideoModelFamily;
@@ -341,6 +344,11 @@ export function GenerationDialog() {
    *  is a single Veo video. */
   const [videoExtendMode, setVideoExtendMode] = useState<"continuation" | "extend">("continuation");
   const [r2vAdditionalMediaIds, setR2vAdditionalMediaIds] = useState<string[]>([]);
+  const [omniVideoMode, setOmniVideoMode] = useState<"default" | "video_reference">("default");
+  const [videoReferenceMediaId, setVideoReferenceMediaId] = useState<string | null>(null);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [uploadVideoError, setUploadVideoError] = useState<string | null>(null);
+  const videoFileInputRef = useRef<HTMLInputElement>(null);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLTextAreaElement>(null);
@@ -377,23 +385,28 @@ export function GenerationDialog() {
 
   const targetType = node?.data.type ?? "image";
   const isVideo = targetType === "video";
+  const isOmniVideo = isVideo && videoModelFamily === "omni_flash";
   const isCharacter = targetType === "character";
   const isStoryboard = targetType === "Storyboard";
 
   // A standalone video node remains structurally t2v in the graph, but
   // picking library images changes the effective generation mode.
-  const independentVideoEffectiveMode: "t2v" | "i2v" | "r2v" =
-    independentVideoMediaIds.length > 1
-      ? "r2v"
-      : independentVideoMediaIds.length === 1
-        ? independentVideoMode
-        : "t2v";
+  const independentVideoEffectiveMode: "t2v" | "i2v" | "r2v" | "video_reference" =
+    isOmniVideo && omniVideoMode === "video_reference"
+      ? "video_reference"
+      : independentVideoMediaIds.length > 1
+        ? "r2v"
+        : independentVideoMediaIds.length === 1
+          ? independentVideoMode
+          : "t2v";
   const independentVideoModeLabel =
-    independentVideoEffectiveMode === "t2v"
-      ? "Text → Video (t2v)"
-      : independentVideoEffectiveMode === "i2v"
-        ? "Image → Video (i2v)"
-        : "Ingredients (r2v)";
+    independentVideoEffectiveMode === "video_reference"
+      ? "Video Reference (jIps6)"
+      : independentVideoEffectiveMode === "t2v"
+        ? "Text → Video (t2v)"
+        : independentVideoEffectiveMode === "i2v"
+          ? "Image → Video (i2v)"
+          : "Ingredients (r2v)";
 
   const persistIndependentVideoSelection = (
     mediaIds: string[],
@@ -417,6 +430,31 @@ export function GenerationDialog() {
     });
   };
 
+  async function handleUploadVideoFile(file: File) {
+    if (!file || rfId === null) return;
+    if (file.size > 50 * 1024 * 1024) {
+      setUploadVideoError("Tệp video quá lớn (tối đa 50 MB)");
+      return;
+    }
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (!['mp4', 'webm', 'mov'].includes(ext || '')) {
+      setUploadVideoError("Chỉ chấp nhận tệp video MP4, WEBM, hoặc MOV");
+      return;
+    }
+    setUploadVideoError(null);
+    setUploadingVideo(true);
+    try {
+      const projectId = await useGenerationStore.getState().ensureProjectId();
+      const dbId = parseInt(rfId, 10);
+      const resp = await uploadImage(file, projectId || undefined, isNaN(dbId) ? undefined : dbId, boardPublicId || undefined);
+      setVideoReferenceMediaId(resp.media_id);
+    } catch (err) {
+      setUploadVideoError(err instanceof Error ? err.message : "Tải video lên thất bại");
+    } finally {
+      setUploadingVideo(false);
+    }
+  }
+
   // Detailed mode resolution for video nodes: t2v, i2v, or video_continuation
   const videoInfo: VideoUpstreamInfo | null = isVideo && rfId
     ? getVideoUpstreamInfo(rfId, nodes, edges)
@@ -433,7 +471,6 @@ export function GenerationDialog() {
   // video model: the dialog derives its layout purely from the upstream
   // graph (mode + connected sources), and only the Resolution / Duration
   // fields are shown additionally when Omni is selected.
-  const isOmniVideo = isVideo && videoModelFamily === "omni_flash";
   const rawRefSourceNodeCount = rfId
     ? edges
         .filter((e) => e.target === rfId)
@@ -706,6 +743,17 @@ export function GenerationDialog() {
       setR2vAdditionalMediaIds(
         savedForm.r2vAdditionalMediaIds ?? [],
       );
+
+      const storedVideoRef = (savedGeneration.videoReference as any)?.sourceMediaId
+        ?? (savedForm as any).videoReferenceMediaId
+        ?? (typeof (savedGeneration as any).sourceMediaId === "string" ? (savedGeneration as any).sourceMediaId : null);
+      setVideoReferenceMediaId(typeof storedVideoRef === "string" ? storedVideoRef : null);
+
+      const isVideoRefMode = savedGeneration.videoMode === "video_reference"
+        || (savedForm as any).omniVideoMode === "video_reference";
+      setOmniVideoMode(isVideoRefMode ? "video_reference" : "default");
+      setUploadVideoError(null);
+      setUploadingVideo(false);
       
       triggerRef.current = document.activeElement;
       // Focus textarea on open
@@ -746,6 +794,8 @@ export function GenerationDialog() {
       connectedVideoMode,
       videoExtendMode,
       r2vAdditionalMediaIds,
+      omniVideoMode,
+      videoReferenceMediaId,
       backend: mediaProvider,
       imageModel,
       videoModel: videoModelFamily,
@@ -753,8 +803,9 @@ export function GenerationDialog() {
       omniFlashDuration,
       omniFlashResolution,
     };
+    const isVideoRefActive = isVideo && draft.videoModel === "omni_flash" && draft.omniVideoMode === "video_reference";
     const videoModel = draft.videoModel === "omni_flash"
-      ? { family: "omni_flash", id: `abra_r2v_${draft.omniFlashDuration}s${draft.omniFlashResolution === "360p" ? "_360p" : ""}` }
+      ? { family: "omni_flash", id: isVideoRefActive ? "abra_edit" : `abra_r2v_${draft.omniFlashDuration}s${draft.omniFlashResolution === "360p" ? "_360p" : ""}` }
       : { family: "veo", quality: draft.videoQuality };
     const currentGeneration = useBoardStore.getState().nodes.find((item) => item.id === rfId)?.data.generation ?? {};
     const isImageNode = targetType === "image" || targetType === "character" || isStoryboard;
@@ -776,9 +827,12 @@ export function GenerationDialog() {
         independentVideoMode: draft.independentVideoMode,
         connectedVideoMode: draft.connectedVideoMode,
         videoExtendMode: draft.videoExtendMode,
-        videoMode: (useBoardStore.getState().edges.some((edge) => edge.target === rfId)
-          ? (videoInfo?.mode === "video_continuation" && videoInfo.sourceNodeFamily === "veo" && draft.videoExtendMode === "extend" ? "extend_video" : draft.connectedVideoMode)
-          : draft.independentVideoMode) as "t2v" | "i2v" | "r2v" | "extend_video",
+        videoMode: (isVideoRefActive
+          ? "video_reference"
+          : (useBoardStore.getState().edges.some((edge) => edge.target === rfId)
+              ? (videoInfo?.mode === "video_continuation" && videoInfo.sourceNodeFamily === "veo" && draft.videoExtendMode === "extend" ? "extend_video" : draft.connectedVideoMode)
+              : draft.independentVideoMode)) as "t2v" | "i2v" | "r2v" | "extend_video" | "video_reference",
+        videoReference: isVideoRefActive ? { sourceMediaId: draft.videoReferenceMediaId } : undefined,
         r2vAdditionalMediaIds: draft.r2vAdditionalMediaIds,
         ...(draft.videoModel === "omni_flash"
           ? { duration: draft.omniFlashDuration, resolution: draft.omniFlashResolution }
@@ -813,6 +867,8 @@ export function GenerationDialog() {
     independentVideoMode,
     connectedVideoMode,
     r2vAdditionalMediaIds,
+    omniVideoMode,
+    videoReferenceMediaId,
     mediaProvider,
     imageModel,
     videoModelFamily,
@@ -1046,6 +1102,34 @@ export function GenerationDialog() {
         ? `${finalPrompt}. ${camInstruction}`
         : finalPrompt;
 
+      // 0. Video Reference (Omni Flash abra_edit - jIps6)
+      if (isOmniVideo && omniVideoMode === "video_reference") {
+        const refMid = videoReferenceMediaId || (videoInfo?.mode === "video_continuation" ? videoInfo.sourceMediaId : null);
+        if (!refMid) {
+          useBoardStore.getState().updateNodeData(rfId, {
+            extractError: "Vui lòng chọn hoặc tải lên video tham chiếu.",
+          });
+          return;
+        }
+        useBoardStore.getState().updateNodeGeneration(rfId, {
+          videoMode: "video_reference",
+          videoReference: { sourceMediaId: refMid },
+          r2vAdditionalMediaIds,
+        });
+        dispatchGeneration(rfId, {
+          prompt: videoPrompt,
+          aspectRatio,
+          kind: "video",
+          cameraMode: camera,
+          videoMode: "video_reference",
+          sourceMediaId: refMid,
+          sourceMediaIds: r2vAdditionalMediaIds.length > 0 ? r2vAdditionalMediaIds : undefined,
+          variantCount: variants,
+        });
+        closeGenerationDialog();
+        return;
+      }
+
       // 1. Text-to-Video (không có node nối trước) / Independent Video
       if (videoInfo?.mode === "t2v") {
         const actualMode = independentVideoMediaIds.length > 1 
@@ -1180,7 +1264,7 @@ export function GenerationDialog() {
     || node?.data.aiBriefStatus === "pending";
   const isGeneratingMedia =
     node?.data.status === "queued" || node?.data.status === "running";
-  const isWorking = autoBuilding || nodeLLMBusy || isGeneratingMedia || extractingFrame;
+  const isWorking = autoBuilding || nodeLLMBusy || isGeneratingMedia || extractingFrame || uploadingVideo;
 
   // Both image and video allow empty prompt — we'll auto-synth on submit.
   // Veo i2v needs at least one selected source variant; Omni Flash
@@ -1188,7 +1272,9 @@ export function GenerationDialog() {
   // t2v requires prompt. video_continuation requires upstream video to be done.
   const isVideoReady =
     !isVideo ||
-    (videoInfo?.mode === "t2v"
+    (isOmniVideo && omniVideoMode === "video_reference"
+      ? (Boolean(videoReferenceMediaId) || (videoInfo?.mode === "video_continuation" && (Boolean(videoInfo.sourceMediaId) || hasPendingUpstream))) && !extractingFrame
+      : videoInfo?.mode === "t2v"
       ? (isOmniVideo ? independentVideoMediaIds.length > 0 : (prompt.trim().length > 0 || independentVideoMediaIds.length > 0)) && !extractingFrame
       : videoInfo?.mode === "video_continuation"
       ? (Boolean(videoInfo.sourceMediaId) || hasPendingUpstream) &&
@@ -1224,7 +1310,9 @@ export function GenerationDialog() {
           <div>
             <h2 id="gen-dialog-title" className="gen-dialog__title">
               {isVideo
-                ? videoInfo?.mode === "t2v"
+                ? (isOmniVideo && omniVideoMode === "video_reference")
+                  ? "Tham chiếu video (Omni Flash - jIps6)"
+                  : videoInfo?.mode === "t2v"
                   ? independentVideoEffectiveMode === "t2v"
                     ? "Tạo video từ Text (t2v)"
                     : independentVideoEffectiveMode === "i2v"
@@ -1246,8 +1334,8 @@ export function GenerationDialog() {
             <span className="gen-dialog__subtitle">
               Node #{node?.data.shortId ?? rfId}
               {isVideo && videoInfo && (
-                <span className={`gen-dialog__mode-badge gen-dialog__mode-badge--${videoInfo.mode === "t2v" ? independentVideoEffectiveMode : (isExtend ? "extend" : videoInfo.mode)}`}>
-                  {videoInfo.mode === "t2v" ? independentVideoModeLabel : (isExtend ? "Extend video (Veo)" : videoInfo.label)}
+                <span className={`gen-dialog__mode-badge gen-dialog__mode-badge--${isOmniVideo && omniVideoMode === "video_reference" ? "video_reference" : (videoInfo.mode === "t2v" ? independentVideoEffectiveMode : (isExtend ? "extend" : videoInfo.mode))}`}>
+                  {isOmniVideo && omniVideoMode === "video_reference" ? "Tham chiếu video (Omni Flash)" : (videoInfo.mode === "t2v" ? independentVideoModeLabel : (isExtend ? "Extend video (Veo)" : videoInfo.label))}
                 </span>
               )}
             </span>
@@ -1286,7 +1374,9 @@ export function GenerationDialog() {
               }}
               placeholder={
                 isVideo
-                  ? videoInfo?.mode === "t2v"
+                  ? (isOmniVideo && omniVideoMode === "video_reference")
+                    ? "Mô tả chỉnh sửa video theo video tham chiếu (vd: đổi nhân vật trong video, đổi trang phục, bối cảnh)…"
+                    : videoInfo?.mode === "t2v"
                     ? independentVideoEffectiveMode === "t2v"
                       ? "Nhập mô tả video cần tạo (Text to Video)…"
                       : independentVideoEffectiveMode === "i2v"
@@ -1416,44 +1506,189 @@ export function GenerationDialog() {
         {/* Source image / video source info (t2v, continuation, or i2v) */}
         {isVideo && videoInfo?.mode === "t2v" && (
           <div className="gen-dialog__field">
-            <div className="source-info-box source-info-box--t2v">
-              <span className="source-info-box__icon">✨</span>
-              <div className="source-info-box__content" style={{ width: '100%' }}>
-                <div className="gen-dialog__label-row">
-                  <span className="source-info-box__title">Chế độ: Text/Image to Video</span>
-                  {independentVideoMediaIds.length === 1 && (
-                    <select
-                      className="source-select-mini"
-                      value={independentVideoMode}
-                      onChange={(e) => persistIndependentVideoMode(e.target.value as "i2v" | "r2v")}
-                      disabled={isWorking}
-                      style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fff', border: 'none' }}
-                    >
-                      <option value="i2v">Nối tiếp (i2v)</option>
-                      <option value="r2v">Ingredients (r2v)</option>
-                    </select>
-                  )}
-                  {independentVideoMediaIds.length > 1 && (
-                    <span className="source-select-mini" style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fb923c', border: 'none', display: 'inline-block' }}>
-                      Ingredients (r2v)
-                    </span>
-                  )}
+            {isOmniVideo && omniVideoMode === "video_reference" ? (
+              <div className="source-info-box source-info-box--continuation">
+                <div className="source-info-box__header">
+                  <span className="source-info-box__icon">🎥</span>
+                  <div className="source-info-box__content" style={{ width: '100%' }}>
+                    <div className="gen-dialog__label-row" style={{ alignItems: 'center' }}>
+                      <span className="source-info-box__title">Chế độ: Tham chiếu video</span>
+                      <select
+                        className="source-select-mini"
+                        value={omniVideoMode}
+                        onChange={(e) => setOmniVideoMode(e.target.value as "default" | "video_reference")}
+                        disabled={isWorking}
+                        style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fff', border: 'none' }}
+                      >
+                        <option value="default">Ảnh / Text (T2V/I2V/R2V)</option>
+                        <option value="video_reference">Tham chiếu video</option>
+                      </select>
+                    </div>
+                    <p className="source-info-box__desc">
+                      Chỉ tham chiếu duy nhất 1 video. Bạn có thể chọn video trong project hoặc tải tệp video lên.
+                    </p>
+                  </div>
                 </div>
-                <div style={{ marginTop: 10 }}>
-                  <MediaPicker
-                    kind="image"
-                    workspaceId={boardPublicId}
-                    multi={true}
-                    value={independentVideoMediaIds}
-                    disabled={isWorking}
-                    onChange={(ids) => {
-                      const newIds = Array.isArray(ids) ? ids : (ids ? [ids] : []);
-                      persistIndependentVideoSelection(newIds);
-                    }}
-                  />
+
+                {uploadVideoError && (
+                  <p className="node-error" style={{ margin: '8px 0 0' }}>{uploadVideoError}</p>
+                )}
+
+                {videoReferenceMediaId ? (
+                  <div className="source-continuation-preview" style={{ marginTop: 10 }}>
+                    <video
+                      src={mediaUrl(videoReferenceMediaId)}
+                      className="source-continuation-video"
+                      controls
+                      muted
+                      preload="metadata"
+                      style={{ maxHeight: 180, width: '100%', borderRadius: 6 }}
+                    />
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+                      <span className="source-continuation-tag" style={{ color: '#22d3ee' }}>
+                        ✓ Đang tham chiếu video này
+                      </span>
+                      <MediaPicker
+                        kind="video"
+                        workspaceId={boardPublicId}
+                        multi={false}
+                        value={videoReferenceMediaId}
+                        buttonText="Đổi video"
+                        disabled={isWorking || uploadingVideo}
+                        onChange={(val) => {
+                          const id = Array.isArray(val) ? val[0] : val;
+                          setVideoReferenceMediaId(id || null);
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        disabled={isWorking || uploadingVideo}
+                        onClick={() => videoFileInputRef.current?.click()}
+                      >
+                        {uploadingVideo ? "Đang tải…" : "⬆ Tải video khác"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.4)' }}
+                        disabled={isWorking || uploadingVideo}
+                        onClick={() => setVideoReferenceMediaId(null)}
+                      >
+                        ✕ Xóa
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 12, display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <MediaPicker
+                      kind="video"
+                      workspaceId={boardPublicId}
+                      multi={false}
+                      value={null}
+                      buttonText="📁 Chọn video trong project"
+                      disabled={isWorking || uploadingVideo}
+                      onChange={(val) => {
+                        const id = Array.isArray(val) ? val[0] : val;
+                        setVideoReferenceMediaId(id || null);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-primary"
+                      disabled={isWorking || uploadingVideo}
+                      onClick={() => videoFileInputRef.current?.click()}
+                    >
+                      {uploadingVideo ? "Đang tải…" : "⬆ Tải video lên"}
+                    </button>
+                  </div>
+                )}
+
+                <input
+                  ref={videoFileInputRef}
+                  type="file"
+                  accept="video/mp4,video/webm,video/quicktime"
+                  style={{ display: 'none' }}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      await handleUploadVideoFile(file);
+                      e.target.value = '';
+                    }
+                  }}
+                />
+
+                <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div className="gen-dialog__label-row">
+                    <span className="gen-dialog__label">Ảnh tham chiếu kèm theo (tuỳ chọn - Ingredients):</span>
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    <MediaPicker
+                      kind="image"
+                      workspaceId={boardPublicId}
+                      multi={true}
+                      value={r2vAdditionalMediaIds}
+                      disabled={isWorking}
+                      onChange={(ids) => {
+                        const newIds = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+                        setR2vAdditionalMediaIds(newIds);
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div className="source-info-box source-info-box--t2v">
+                <span className="source-info-box__icon">✨</span>
+                <div className="source-info-box__content" style={{ width: '100%' }}>
+                  <div className="gen-dialog__label-row">
+                    <span className="source-info-box__title">Chế độ: Text/Image to Video</span>
+                    {isOmniVideo && (
+                      <select
+                        className="source-select-mini"
+                        value={omniVideoMode}
+                        onChange={(e) => setOmniVideoMode(e.target.value as "default" | "video_reference")}
+                        disabled={isWorking}
+                        style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fff', border: 'none' }}
+                      >
+                        <option value="default">Ảnh / Text (T2V/I2V/R2V)</option>
+                        <option value="video_reference">Tham chiếu video</option>
+                      </select>
+                    )}
+                    {independentVideoMediaIds.length === 1 && !isOmniVideo && (
+                      <select
+                        className="source-select-mini"
+                        value={independentVideoMode}
+                        onChange={(e) => persistIndependentVideoMode(e.target.value as "i2v" | "r2v")}
+                        disabled={isWorking}
+                        style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fff', border: 'none' }}
+                      >
+                        <option value="i2v">Nối tiếp (i2v)</option>
+                        <option value="r2v">Ingredients (r2v)</option>
+                      </select>
+                    )}
+                    {independentVideoMediaIds.length > 1 && !isOmniVideo && (
+                      <span className="source-select-mini" style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fb923c', border: 'none', display: 'inline-block' }}>
+                        Ingredients (r2v)
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <MediaPicker
+                      kind="image"
+                      workspaceId={boardPublicId}
+                      multi={true}
+                      value={independentVideoMediaIds}
+                      disabled={isWorking}
+                      onChange={(ids) => {
+                        const newIds = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+                        persistIndependentVideoSelection(newIds);
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1469,7 +1704,9 @@ export function GenerationDialog() {
                       <span className="source-info-box__title">
                         {isExtend
                           ? `Kéo dài Video #${videoInfo.sourceNode?.data.shortId}`
-                          : `Nối tiếp Video #${videoInfo.sourceNode?.data.shortId}`}
+                          : (isOmniVideo && omniVideoMode === "video_reference"
+                              ? `Tham chiếu Video #${videoInfo.sourceNode?.data.shortId}`
+                              : `Nối tiếp Video #${videoInfo.sourceNode?.data.shortId}`)}
                       </span>
                       {isUpstreamVeoVideo && (
                         <select
@@ -1483,11 +1720,25 @@ export function GenerationDialog() {
                           <option value="extend">Kéo dài (Extend video)</option>
                         </select>
                       )}
+                      {isOmniVideo && (
+                        <select
+                          className="source-select-mini"
+                          value={omniVideoMode}
+                          onChange={(e) => setOmniVideoMode(e.target.value as "default" | "video_reference")}
+                          disabled={isWorking}
+                          style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fff', border: 'none' }}
+                        >
+                          <option value="default">Nối tiếp (Frame cuối)</option>
+                          <option value="video_reference">Tham chiếu video này</option>
+                        </select>
+                      )}
                     </div>
                     <p className="source-info-box__desc">
                       {isExtend
                         ? "Kéo dài video trực tiếp bằng Veo Extension Lite (fZytfe). Giữ liền mạch bối cảnh và chuyển động của video gốc."
-                        : "Frame cuối cùng của video trước sẽ được tự động trích xuất làm điểm bắt đầu (start frame) cho video này."}
+                        : (isOmniVideo && omniVideoMode === "video_reference"
+                            ? "Sử dụng video của node trước làm video tham chiếu trực tiếp cho Omni Flash (jIps6)."
+                            : "Frame cuối cùng của video trước sẽ được tự động trích xuất làm điểm bắt đầu (start frame) cho video này.")}
                     </p>
                   </div>
                 </div>
@@ -1507,7 +1758,9 @@ export function GenerationDialog() {
                     <span className="source-continuation-tag">
                       {isExtend
                         ? "✓ Sẵn sàng extend video (Veo 3.1 Extension Lite)"
-                        : "✓ Sẵn sàng trích xuất frame cuối khi bấm Generate"}
+                        : (isOmniVideo && omniVideoMode === "video_reference"
+                            ? "✓ Sẵn sàng tham chiếu video (Omni Flash jIps6)"
+                            : "✓ Sẵn sàng trích xuất frame cuối khi bấm Generate")}
                     </span>
                   </div>
                 )}

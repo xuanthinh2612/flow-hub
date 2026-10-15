@@ -13,6 +13,7 @@ const VIDEO_MODES = [
   { value: 'first_last' as const, label: 'Ảnh đầu + cuối', hint: 'nprQif' },
   { value: 'r2v' as const, label: 'Ingredients', hint: 'MZZa6b' },
   { value: 'extend_video' as const, label: 'Extend video', hint: 'fZytfe' },
+  { value: 'video_reference' as const, label: 'Video reference', hint: 'jIps6' },
 ];
 
 const VIDEO_ASPECTS = [
@@ -75,8 +76,8 @@ export const VideoCreatePage: React.FC = () => {
       start_media_ids: form.mode === 'i2v' ? form.starts : [],
       start_media_id: form.mode === 'first_last' ? form.start : null,
       end_media_id: form.mode === 'first_last' ? form.end : null,
-      ref_media_ids: form.mode === 'r2v' ? form.refs : [],
-      source_media_id: form.mode === 'extend_video' ? form.extend : null,
+      ref_media_ids: (form.mode === 'r2v' || form.mode === 'video_reference') ? form.refs : [],
+      source_media_id: form.mode === 'extend_video' ? form.extend : (form.mode === 'video_reference' ? form.videoReference : null),
       scene_id: form.mode === 'extend_video' ? form.sceneId.trim() || null : null,
       timeout_min: Number(form.timeoutMin) || 10,
     };
@@ -159,6 +160,29 @@ export const VideoCreatePage: React.FC = () => {
                 kind="video"
               />
             </div>
+          )}
+
+          {form.mode === 'video_reference' && (
+            <>
+              <div className="field">
+                <div className="field-label">Video tham chiếu (chọn 1 video từ thư viện)</div>
+                <MediaPicker
+                  value={form.videoReference}
+                  multi={false}
+                  onChange={(videoReference) => update({ videoReference: typeof videoReference === 'string' ? videoReference : null })}
+                  kind="video"
+                />
+              </div>
+              <div className="field">
+                <div className="field-label">Ảnh tham chiếu kèm theo (tuỳ chọn)</div>
+                <MediaPicker
+                  value={form.refs}
+                  multi={true}
+                  onChange={(refs) => update({ refs })}
+                  kind="image"
+                />
+              </div>
+            </>
           )}
 
           <div className="field">
@@ -272,7 +296,7 @@ export const VideoCreatePage: React.FC = () => {
           <ActionPreview label="Tạo video" getSpec={getSpec} />
         </div>
 
-        <RecentJobsPanel types={['t2v', 'i2v', 'first_last', 'r2v', 'extend_video']} />
+        <RecentJobsPanel types={['t2v', 'i2v', 'first_last', 'r2v', 'extend_video', 'video_reference']} />
       </div>
     </div>
   );

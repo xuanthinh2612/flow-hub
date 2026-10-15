@@ -43,10 +43,11 @@ if TYPE_CHECKING:
 log = logging.getLogger("flowhub.jobs")
 
 IMAGE_TYPES = {"image", "character", "edit"}
-VIDEO_TYPES = {"t2v", "i2v", "first_last", "r2v", "extend_video"}
+VIDEO_TYPES = {"t2v", "i2v", "first_last", "r2v", "extend_video", "video_reference"}
 TYPES = IMAGE_TYPES | VIDEO_TYPES | {"upload", "upscale", "template"}
 MODE_BY_TYPE = {"image": "image", "character": "image", "edit": "image", "t2v": "t2v", "i2v": "i2v",
-                "first_last": "first_last", "r2v": "r2v", "extend_video": "extend_video"}
+                "first_last": "first_last", "r2v": "r2v", "extend_video": "extend_video",
+                "video_reference": "video_reference"}
 ACTIVE = {"queued", "running", "polling"}
 TERMINAL = {"done", "partial", "failed", "timeout", "canceled"}
 
@@ -207,6 +208,14 @@ class JobEngine:
         # Normalise aliases: accept media_id as source_media_id for compatibility.
         if kind == "extend_video" and not s.get("source_media_id") and s.get("media_id"):
             s["source_media_id"] = s["media_id"]
+        if kind == "video_reference":
+            if not s.get("source_media_id") and s.get("media_id"):
+                s["source_media_id"] = s["media_id"]
+            # jIps6 edits exactly one clip; the only input the page sends is the
+            # source video, so unlike i2v/r2v there is nothing else to fall back
+            # on — refuse to queue a job that could never carry a source.
+            if not s.get("source_media_id") and not s.get("canvas_dependencies"):
+                raise ValueError("video_reference cần source_media_id (video để chỉnh)")
         if s["extract_video_ids"] or s.get("extract_start_video_id"):
             s["stage"] = "extracting_frames"
             s["extracted_video_frames"] = {}
@@ -287,6 +296,16 @@ class JobEngine:
                                   text=prompt,
                                   build=lambda: fb.extend_video_request(prompt, project_id, source,
                                                                         scene_id=scene, model=model)))
+        elif kind == "video_reference":
+            # jIps6 / "abra_edit": edit one clip, guided by optional image
+            # references. Same source-first layout as extend_video above.
+            source = str(s["source_media_id"])
+            images = s.get("ref_media_ids") or None
+            for n in range(s["count"]):
+                calls.append(Call(f"video ref #{n + 1}", fb.RPC_VIDEO_REFERENCE,
+                                  captcha=cap(fb.RPC_VIDEO_REFERENCE), text=prompt,
+                                  build=lambda: fb.video_reference_request(prompt, project_id, source,
+                                                                          s["aspect_code"], model, images)))
         elif kind == "upscale":
             calls.append(Call(s["resolution"], fb.RPC_UPSCALE_IMAGE, captcha=cap(fb.RPC_UPSCALE_IMAGE),
                               build=lambda: fb.upscale_request(s["media_id"], s["resolution"])))
@@ -717,9 +736,10 @@ class JobEngine:
         for dep, media_id in resolved:
             is_video = dep.get("source_type") == "video"
             kind = spec.get("type")
-            if kind == "extend_video":
-                # The single upstream video node provides the clip to extend.
-                # source_media_id is a scalar — just set it; dedupe not needed.
+            if kind in ("extend_video", "video_reference"):
+                # The single upstream video node provides the clip to extend /
+                # the reference video to edit. source_media_id is a scalar —
+                # just set it; dedupe not needed.
                 if is_video:
                     old_ids = set(dep.get("previous_media_ids") or [])
                     if not old_ids or spec.get("source_media_id") in old_ids:
@@ -732,7 +752,7 @@ class JobEngine:
                 key = "extract_video_ids" if is_video else "ref_media_ids"
             else:
                 continue
-            if kind == "extend_video":
+            if kind in ("extend_video", "video_reference"):
                 continue
             old_ids = set(dep.get("previous_media_ids") or [])
             if old_ids:
@@ -1047,12 +1067,18 @@ class JobEngine:
         url = urls[1] if urls else None
         s = job["spec"]
         data = base64.b64decode(b64)
-        self.media.upsert({"id": media_id, "kind": "image", "url": url, "prompt": s.get("file_name"), "source": "upload",
-                           "job_id": job["id"], "aspect": image_aspect(data),
+        mime = (s.get("mime_type") or "").lower()
+        is_video = mime.startswith("video/")
+        self.media.upsert({"id": media_id, "kind": "video" if is_video else "image", "url": url,
+                           "prompt": s.get("file_name"), "source": "upload",
+                           "job_id": job["id"],
+                           # Videos carry no frame geometry to sniff here, and the
+                           # reference-video mode needs no crop from this row.
+                           "aspect": None if is_video else image_aspect(data),
                            "workspace_id": job.get("workspace_id", s.get("workspace_id"))})
         self.media.save_bytes(media_id, data, s.get("mime_type"),
                               workspace_id=job.get("workspace_id", s.get("workspace_id")))
-        job["results"].append({"kind": "image", "media_id": media_id, "url": url})
+        job["results"].append({"kind": "video" if is_video else "image", "media_id": media_id, "url": url})
         self._finish(job, 1, 1, None)
 
     async def _run_upscale(self, job: dict, worker: "Worker", call: Call) -> None:

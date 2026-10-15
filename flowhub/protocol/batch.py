@@ -36,6 +36,7 @@ RPC_GEN_VIDEO_TEXT = "YhhmEf"       # text-to-video
 RPC_GEN_VIDEO_FIRST_LAST = "nprQif"   # first + last frame: Omni, Veo Fast, Veo Lite
 RPC_GEN_VIDEO_REFERENCES = "MZZa6b"  # ingredients: Omni, Veo Fast
 RPC_GEN_VIDEO_EXTEND = "fZytfe"      # extend a clip: Veo 3.1 extension Lite
+RPC_VIDEO_REFERENCE = "jIps6"     # edit a clip with a video reference: Omni Flash
 RPC_OPERATION = "jwpduf"
 RPC_PROJECT_MEDIA = "Zzl0ze"
 RPC_MEDIA = "as29s"
@@ -51,6 +52,7 @@ RPC_NAMES: dict[str, str] = {
     RPC_GEN_VIDEO_FIRST_LAST: "Video ảnh đầu + cuối",
     RPC_GEN_VIDEO_REFERENCES: "Video Ingredients",
     RPC_GEN_VIDEO_EXTEND: "Extend video (kéo dài clip)",
+    RPC_VIDEO_REFERENCE: "Chỉnh video bằng video tham chiếu (Omni Flash)",
     RPC_OPERATION: "Poll operation",
     RPC_PROJECT_MEDIA: "Danh sách media project",
     RPC_MEDIA: "URL media",
@@ -74,6 +76,10 @@ POLL_RPCS = {RPC_OPERATION, RPC_PROJECT_MEDIA, RPC_MEDIA, "ngNC2", "nzlxg"}
 CAPTCHA_IMAGE = "IMAGE_GENERATION"
 CAPTCHA_VIDEO = "VIDEO_GENERATION"
 CAPTCHA_UPLOAD = "UPLOAD_IMAGE"
+#: UNVERIFIED: Flow's page has only been seen minting UPLOAD_IMAGE for maseQ.
+#: A video upload is guessed to use its own action; the Observation page
+#: replaces this guess with whatever the page actually mints.
+CAPTCHA_UPLOAD_VIDEO = "UPLOAD_VIDEO"
 
 #: Default reCAPTCHA action per RPC. The Observation page learns the action the
 #: page itself mints right before each RPC and that learned value wins.
@@ -86,6 +92,7 @@ DEFAULT_CAPTCHA_ACTIONS: dict[str, str] = {
     RPC_GEN_VIDEO_FIRST_LAST: CAPTCHA_VIDEO,
     RPC_GEN_VIDEO_REFERENCES: CAPTCHA_VIDEO,
     RPC_GEN_VIDEO_EXTEND: CAPTCHA_VIDEO,
+    RPC_VIDEO_REFERENCE: CAPTCHA_VIDEO,
 }
 
 #: The extension swaps a freshly minted reCAPTCHA token in for this marker.
@@ -434,6 +441,69 @@ def extend_video_request(
     if scene:
         trailing.extend([None, [scene, 1]])
     return build_envelope(RPC_GEN_VIDEO_EXTEND, [[request], context(project_id), trailing])
+
+
+#: Operation name of the video-reference request (jIps6). It is a fixed
+#: operation string the page puts at slot 2 — unlike the abra_<mode>_<N>s wire
+#: ids, it does not carry duration or resolution.
+VIDEO_REFERENCE_OPERATION = "abra_edit"
+
+#: Size slots the page sends with the source-clip block of a video-reference
+#: request (observed 2026-10-15: `[null, <mediaId>, 0, 192]`).
+VIDEO_REFERENCE_HEIGHT = 0
+VIDEO_REFERENCE_WIDTH = 192
+
+
+def video_reference_request(
+    prompt: str,
+    project_id: str,
+    source_media_id: str,
+    aspect: int,
+    model: str = VIDEO_REFERENCE_OPERATION,
+    image_reference_ids: Optional[list[str]] = None,
+) -> str:
+    """Video reference (jIps6, operation ``abra_edit``) — Omni Flash. UNVERIFIED.
+
+    Reconstructed from a body the Flow page sent on 2026-10-15 for the prompt
+    "đổi hình cô gái trong ảnh … thay thế cô gái trong video" (payload shortened
+    in places, but every slot survives)::
+
+        inner[0] = [[[null, <video media id>, 0, 192],   # the clip being edited
+                     [null, null, [[[<prompt>]]]],       # prompt block
+                     "abra_edit",                        # operation name
+                     2,                                  # aspect code
+                     [null, null, null, null, <uuid>, <uuid>],
+                     null, null, null,
+                     [[null, <image media id>, …]]]]     # image references
+        inner[1] = context(project_id)
+        inner[2] = [<uuid>, 2]
+
+    EXACTLY ONE video is referenced: it is the clip the edit rewrites, and it is
+    the only media id Flow accepts in slot 0. Image references — the same
+    ``[[null, mediaId], …]`` shape ingredients (MZZa6b) use — go in slot 8 and
+    are optional. The result behaves like every other video job: submit returns
+    an operation id, then jwpduf → as29s yields the clip.
+
+    Everything ambiguous here (the ``0``/``192`` size slots, whether no image
+    reference omits slot 8, and the captcha action) is flagged UNVERIFIED and
+    the Observation page's builder check will report the real shape as soon as
+    the page sends one.
+    """
+    if not source_media_id:
+        raise ValueError("video reference needs the media id of the video to edit")
+    request: list[Any] = [
+        [None, str(source_media_id), VIDEO_REFERENCE_HEIGHT, VIDEO_REFERENCE_WIDTH],
+        prompt_block(prompt),
+        str(model),
+        aspect,
+        client_ids(),
+        None,
+        None,
+        None,
+    ]
+    refs = [[None, str(mid)] for mid in (image_reference_ids or []) if mid]
+    request.append(refs or None)
+    return build_envelope(RPC_VIDEO_REFERENCE, [[request], context(project_id), [client_uuid(), 2]])
 
 
 def i2v_request(prompt: str, project_id: str, source_media_id: str, aspect: int, model: str,

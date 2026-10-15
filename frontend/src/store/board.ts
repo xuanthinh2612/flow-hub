@@ -39,7 +39,9 @@ export interface NodeGeneration extends Record<string, unknown> {
   resolution?: string | null;
   duration?: number | null;
   camera?: "static" | "dynamic";
-  videoMode?: "t2v" | "i2v" | "r2v" | "extend_video";
+  videoMode?: "t2v" | "i2v" | "r2v" | "extend_video" | "video_reference";
+  /** jIps6 video reference: the single clip the edit rewrites. */
+  videoReference?: { sourceMediaId?: string | null };
   operation?: string;
   prompts?: string[];
   prompt?: string;
@@ -194,16 +196,18 @@ function migrateNodeGeneration(type: NodeType, data: Record<string, unknown>): N
   const duration = draft.omniFlashDuration ?? previous.duration ?? defaults.duration;
   const resolution = draft.omniFlashResolution ?? previous.resolution ?? defaults.resolution;
   const quality = draft.videoQuality ?? previousModel.quality ?? (defaults.model as NodeGeneration["model"])?.quality;
+  const videoMode = (draft.videoMode ?? previous.videoMode ?? draft.connectedVideoMode ?? draft.independentVideoMode
+    ?? data.connectedVideoMode ?? data.independentVideoMode ?? defaults.videoMode) as NodeGeneration["videoMode"];
+  const videoRef = (draft.videoReference ?? previous.videoReference
+    ?? (data.video_reference ? { sourceMediaId: (data.video_reference as any).sourceMediaId } : undefined)) as NodeGeneration["videoReference"];
   const model = isVideo
     ? videoFamily === "omni_flash"
       ? {
           family: "omni_flash",
-          id: `abra_r2v_${Number(duration ?? 8)}s${String(resolution ?? "720p") === "360p" ? "_360p" : ""}`,
+          id: videoMode === "video_reference" ? "abra_edit" : `abra_r2v_${Number(duration ?? 8)}s${String(resolution ?? "720p") === "360p" ? "_360p" : ""}`,
         }
       : { family: "veo", ...(typeof quality === "string" ? { quality } : {}) }
     : isImageGenerator ? { family: "image", ...(typeof imageModelId === "string" ? { id: imageModelId } : {}) } : undefined;
-  const videoMode = draft.connectedVideoMode ?? draft.independentVideoMode
-    ?? data.connectedVideoMode ?? data.independentVideoMode ?? previous.videoMode ?? defaults.videoMode;
   return {
     ...defaults,
     ...previous,
@@ -213,7 +217,8 @@ function migrateNodeGeneration(type: NodeType, data: Record<string, unknown>): N
     ...(model ? { model } : {}),
     ...(isVideo && videoFamily === "omni_flash" ? { duration: Number(duration ?? 8), resolution: String(resolution ?? "720p") } : { duration: null, resolution: null }),
     camera: (draft.camera ?? previous.camera ?? "static") as NodeGeneration["camera"],
-    ...(typeof videoMode === "string" ? { videoMode: videoMode as NodeGeneration["videoMode"] } : {}),
+    ...(typeof videoMode === "string" ? { videoMode } : {}),
+    ...(videoRef ? { videoReference: videoRef } : {}),
     variants: Number(draft.variants ?? data.variantCount ?? 1),
     ...(Array.isArray(previous.prompts) || Array.isArray(draft.prompts) ? { prompts: (draft.prompts ?? previous.prompts) as string[] } : {}),
     charGender: (draft.charGender ?? data.charGender ?? null) as string | null,

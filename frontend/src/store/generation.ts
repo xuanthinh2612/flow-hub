@@ -87,7 +87,7 @@ interface GenerationState {
       aspectRatio?: string;
       paygateTier?: string;
       kind?: "image" | "video";
-      videoMode?: "t2v" | "i2v" | "r2v" | "extend_video";
+      videoMode?: "t2v" | "i2v" | "r2v" | "extend_video" | "video_reference";
       cameraMode?: "static" | "dynamic";
       sourceMediaId?: string;
       sourceVideoId?: string;
@@ -316,11 +316,13 @@ const MEDIA_PRODUCING_TYPES = new Set([
   "gen_video_omni",
   "gen_video_text",
   "gen_video_extend",
+  "gen_video_video_reference",
   "t2v",
   "i2v",
   "image",
   "edit_image",
   "extend_video",
+  "video_reference",
 ]);
 
 // ── Poll loop ────────────────────────────────────────────────────────────
@@ -949,7 +951,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     const selectedImageModel = configuredModel?.family === "image" && configuredModel.id ? configuredModel.id : settings.imageModel;
     const incomingCanvasSource = useBoardStore.getState().edges.some((edge) => edge.target === rfId);
     const effectiveVideoMode = opts.videoMode ?? (incomingCanvasSource
-      ? (previousGeneration.videoMode === "extend_video" ? "extend_video" : (previousGeneration.connectedVideoMode ?? (previousGeneration.videoMode === "r2v" ? "r2v" : "i2v")))
+      ? (previousGeneration.videoMode === "extend_video" ? "extend_video" : (previousGeneration.videoMode === "video_reference" ? "video_reference" : (previousGeneration.connectedVideoMode ?? (previousGeneration.videoMode === "r2v" ? "r2v" : "i2v"))))
       : previousGeneration.independentVideoMode ?? previousGeneration.videoMode ?? "t2v");
     const effectiveAspectRatio = previousGeneration.aspectRatio ?? opts.aspectRatio ?? (kind === "video"
       ? selectedVideoFamily === "omni_flash" ? "VIDEO_ASPECT_RATIO_PORTRAIT" : "VIDEO_ASPECT_RATIO_LANDSCAPE"
@@ -962,7 +964,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         ? selectedVideoFamily === "omni_flash"
           ? {
               family: "omni_flash",
-              id: configuredModel?.id ?? `abra_r2v_${selectedDuration}s${selectedResolution === "360p" ? "_360p" : ""}`,
+              id: configuredModel?.id ?? (effectiveVideoMode === "video_reference" ? "abra_edit" : `abra_r2v_${selectedDuration}s${selectedResolution === "360p" ? "_360p" : ""}`),
             }
           : effectiveVideoMode === "extend_video"
           ? { family: "veo", id: "veo_3_1_extension_lite" }
@@ -1048,6 +1050,44 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               media_provider: mediaProvider,
               project_id: projectId,
               source_media_id: sourceMediaId,
+              aspect_ratio: effectiveAspectRatio,
+              paygate_tier: opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
+              variant_count: variantCount,
+            },
+          });
+        }
+
+        // ── Video Reference (jIps6 / Omni Flash abra_edit) ───────────
+        else if (videoMode === "video_reference") {
+          let sourceMediaId = opts.sourceMediaId ?? (generation.videoReference as any)?.sourceMediaId;
+          if (!sourceMediaId) {
+            const { nodes, edges } = useBoardStore.getState();
+            const info = getVideoUpstreamInfo(rfId, nodes, edges);
+            sourceMediaId = info.sourceMediaId;
+          }
+          if (!sourceMediaId && !hasPendingUpstreamGeneration(rfId)) {
+            const error = "video_reference cần source_media_id (video tham chiếu)";
+            useBoardStore.getState().updateNodeData(rfId, { status: "error", error });
+            if (!isNaN(nodeDbId)) await patchNode(nodeDbId, { status: "error", data: { error } }).catch(() => {});
+            set({ error: "Vui lòng chọn hoặc tải lên video tham chiếu." });
+            return;
+          }
+          const upstreamSources = opts.sourceMediaIds
+            ? []
+            : collectUpstreamVideoGenerationSources(rfId);
+          const ingredients = opts.sourceMediaIds?.length
+            ? opts.sourceMediaIds
+            : upstreamSources.filter((source) => !source.isVideo).map((source) => source.mediaId);
+
+          reqDto = await createRequest({
+            type: "gen_video_video_reference",
+            node_id: isNaN(nodeDbId) ? rfId : nodeDbId,
+            params: {
+              prompt: opts.prompt,
+              media_provider: mediaProvider,
+              project_id: projectId,
+              source_media_id: sourceMediaId,
+              ref_media_ids: ingredients,
               aspect_ratio: effectiveAspectRatio,
               paygate_tier: opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
               variant_count: variantCount,

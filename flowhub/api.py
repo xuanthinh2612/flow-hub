@@ -413,11 +413,28 @@ async def create_canvas_request(body: CanvasRequestCreate, request: Request):
         media = core.db.one("SELECT workspace_id FROM media WHERE id=?", (media_id,))
         if not media or media["workspace_id"] != project["public_id"]:
             raise HTTPException(400, "ảnh tham chiếu không thuộc project canvas hiện tại")
-    # For extend_video: additionally validate that source_media_id is a video.
-    if body.spec.get("type") == "extend_video" and body.spec.get("source_media_id"):
+    # For source-first video jobs the referenced media must itself be a video.
+    if body.spec.get("type") in ("extend_video", "video_reference") and body.spec.get("source_media_id"):
         src_vid = core.db.one("SELECT kind FROM media WHERE id=?", (str(body.spec["source_media_id"]),))
         if not src_vid or src_vid["kind"] != "video":
-            raise HTTPException(400, "source_media_id phải là video để kéo dài")
+            raise HTTPException(400, "source_media_id phải là video"
+                                     + (" để kéo dài" if body.spec.get("type") == "extend_video"
+                                        else " (video tham chiếu)"))
+    if body.spec.get("type") == "video_reference":
+        # jIps6 edits a single clip and only Omni Flash exposes it; the picker
+        # offers no other family, and a stray wire id here would silently build
+        # an abra_edit body the page never sends.
+        if str(body.spec.get("family") or "omni_flash") != "omni_flash":
+            raise HTTPException(400, "video_reference chỉ hỗ trợ Omni Flash")
+        model = str(body.spec.get("model") or "")
+        if model and model != fb.VIDEO_REFERENCE_OPERATION:
+            raise HTTPException(400, "video_reference chỉ hỗ trợ Omni Flash (abra_edit)")
+        # The reference video is the only video input; anything in ref_media_ids
+        # is an image the edit is guided by, never a second clip.
+        for ref_id in (str(v) for v in (body.spec.get("ref_media_ids") or []) if v):
+            ref = core.db.one("SELECT kind FROM media WHERE id=?", (ref_id,))
+            if ref and ref["kind"] != "image":
+                raise HTTPException(400, "video_reference chỉ nhận 1 video tham chiếu (ref_media_ids là ảnh)")
     extract_video_ids = set(str(value) for value in (body.spec.get("extract_video_ids") or []) if value)
     if body.spec.get("extract_start_video_id"):
         extract_video_ids.add(str(body.spec["extract_start_video_id"]))
@@ -867,7 +884,8 @@ async def workers(request: Request):
 # ── jobs ────────────────────────────────────────────────────────────────────
 
 class JobCreate(BaseModel):
-    type: Literal["image", "character", "edit", "t2v", "i2v", "first_last", "r2v", "extend_video", "upscale", "template"]
+    type: Literal["image", "character", "edit", "t2v", "i2v", "first_last", "r2v", "extend_video",
+                  "video_reference", "upscale", "template"]
     prompt: Optional[str] = None
     prompts: Optional[list[str]] = Field(None, description="prompt riêng từng biến thể ảnh")
     model: Optional[str] = Field(None, description="wire id chính xác; bỏ trống để chọn theo family")
@@ -884,7 +902,7 @@ class JobCreate(BaseModel):
     end_media_id: Optional[str] = None
     base_media_id: Optional[str] = None
     media_id: Optional[str] = None
-    source_media_id: Optional[str] = Field(None, description="fZytfe extend: video để kéo dài (media id)")
+    source_media_id: Optional[str] = Field(None, description="fZytfe extend / jIps6 video_reference: clip nguồn (media id)")
     scene_id: Optional[str] = Field(None, description="fZytfe: scene uuid của Flow (thường = /scene/<id>), không bắt buộc")
     character: Optional[dict] = Field(None, description="{gender, country, vibe, extras}")
     character_id: Optional[str] = Field(None, description="ảnh: gắn vào một Nhân vật (Character) có sẵn trên Flow")
@@ -904,10 +922,10 @@ async def create_job(body: JobCreate, request: Request):
             source = core_of(request).media.get(body.media_id)
             if source:
                 spec["workspace_id"] = source.get("workspace_id")
-        if body.type == "extend_video" and (body.source_media_id or body.media_id):
+        if body.type in ("extend_video", "video_reference") and (body.source_media_id or body.media_id):
             source = core_of(request).media.get(body.source_media_id or body.media_id)
             if source:
-                # Keep the extended clip in the same Flow workspace as its source.
+                # Keep the new clip in the same Flow workspace as its source.
                 spec["workspace_id"] = source.get("workspace_id")
         return core_of(request).jobs.create(spec)
     except ValueError as exc:
@@ -965,6 +983,15 @@ async def clear_jobs(request: Request):
     return {"ok": True}
 
 
+#: Upload allow-list. Video only exists for the jIps6 "video reference" mode —
+#: a local clip the user picks instead of one already in the Flow project — and
+#: goes through the very same maseQ upload job, so there is one upload pipeline.
+IMAGE_MIMES = ("image/jpeg", "image/png", "image/webp", "image/gif")
+VIDEO_MIMES = ("video/mp4", "video/webm", "video/quicktime")
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_VIDEO_BYTES = 50 * 1024 * 1024
+
+
 @api.post("/uploads", tags=["media"], status_code=201)
 async def upload(request: Request, file: UploadFile = File(...), project_id: Optional[str] = Form(None),
                  workspace_id: Optional[str] = Form(None)):
@@ -975,12 +1002,18 @@ async def upload(request: Request, file: UploadFile = File(...), project_id: Opt
     if workspace_id is not None and board is None:
         raise HTTPException(404, "không tìm thấy project")
     mime = (file.content_type or "").split(";")[0].strip().lower()
-    if mime not in ("image/jpeg", "image/png", "image/webp", "image/gif"):
-        raise HTTPException(415, "chỉ nhận JPEG / PNG / WEBP / GIF")
-    data = await file.read(10 * 1024 * 1024 + 1)
-    if not data or len(data) > 10 * 1024 * 1024:
-        raise HTTPException(413, "ảnh rỗng hoặc quá 10 MB")
-    spec = {"type": "upload", "file_name": file.filename or "upload.jpg", "mime_type": mime, "size": len(data),
+    if mime in IMAGE_MIMES:
+        limit = MAX_IMAGE_BYTES
+        default_name = "upload.jpg"
+    elif mime in VIDEO_MIMES:
+        limit = MAX_VIDEO_BYTES
+        default_name = "upload.mp4"
+    else:
+        raise HTTPException(415, "chỉ nhận JPEG / PNG / WEBP / GIF / MP4 / WEBM / MOV")
+    data = await file.read(limit + 1)
+    if not data or len(data) > limit:
+        raise HTTPException(413, f"tệp rỗng hoặc quá {limit // (1024 * 1024)} MB")
+    spec = {"type": "upload", "file_name": file.filename or default_name, "mime_type": mime, "size": len(data),
             "project_id": project_id, "workspace_id": workspace_id}
     if board and board["worker_id"]:
         spec["worker_id"] = board["worker_id"]
