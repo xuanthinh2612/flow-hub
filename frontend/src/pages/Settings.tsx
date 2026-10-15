@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client';
 import { SettingsData, WorkerInfo } from '../api/types';
+import { extensionLabel } from '../utils/format';
 import { useToast } from '../context/ToastContext';
 
 export const SettingsPage: React.FC = () => {
@@ -126,7 +127,7 @@ export const SettingsPage: React.FC = () => {
 
             <p className="hint">
               Worker đang kết nối:{' '}
-              {onlineWorkers.map((w) => w.label).join(', ') || 'chưa có'}
+              {onlineWorkers.map((w) => extensionLabel(w.label, w.credits).text).join(', ') || 'chưa có'}
             </p>
           </div>
 

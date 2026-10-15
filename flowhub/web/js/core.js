@@ -283,3 +283,31 @@ export function debounce(fn, ms) {
   let t;
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
+
+// ── extensions ──────────────────────────────────────────────
+
+/**
+ * The extension's name with its Flow credit balance beside it — `Chrome nhà (💳 186)`
+ * — mirroring extensionLabel in the React frontend's utils/format.ts so both
+ * dashboards write it the same way.
+ *
+ * Nothing is added while no balance has been read yet (no signed-in
+ * flow.google.com tab, or an extension older than 1.0.4), so the name never grows
+ * a meaningless `(💳 —)`. `stale` marks a number the last read could not refresh:
+ * still that account's balance, just not current.
+ */
+export function extensionLabel(label, credits) {
+  if (typeof credits?.value !== 'number') return { text: label, stale: false, title: null };
+  const stale = credits.ok === false;
+  return {
+    text: `${label} (💳 ${credits.value} credit)`,
+    stale,
+    title: stale && credits.error ? `Credit chưa cập nhật được: ${credits.error}` : null,
+  };
+}
+
+/** The extension's name as an element, credit balance included. */
+export function extensionName(worker) {
+  const { text, stale, title } = extensionLabel(worker.label, worker.credits);
+  return h('b', { class: stale ? 'ext-label ext-label--stale' : 'ext-label', title }, text);
+}

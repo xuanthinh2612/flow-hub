@@ -7,6 +7,7 @@ import { api, projectMediaZipUrl } from '../api/client';
 import type { WorkerInfo } from '../api/types';
 import { exportCanvasProjectJson } from '../services/canvasProjectJson';
 import { importCanvasProjectJson } from '../services/canvasProjectImport';
+import { extensionLabel } from '../utils/format';
 
 type Project = Board & { node_count?: number; video_count?: number; image_count?: number };
 
@@ -217,7 +218,8 @@ export const CanvasProjectsPage: React.FC = () => {
                   <option value="">Mặc định — tự chọn extension</option>
                   {workers.map((worker) => (
                     <option key={worker.id} value={worker.id}>
-                      {worker.label} · {worker.online ? 'online' : 'offline'} · {worker.id.slice(0, 8)}
+                      {extensionLabel(worker.label, worker.credits).text} ·{' '}
+                      {worker.online ? 'online' : 'offline'} · {worker.id.slice(0, 8)}
                     </option>
                   ))}
                 </select>

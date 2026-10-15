@@ -16,7 +16,13 @@
     header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px;
              border-bottom: 1px solid var(--border); }
     header b { font-size: 14px; }
+    /* Name + balance stay together on the left, the state pill on the right. */
+    .brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .pill { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--surface); }
+    /* Credits read from the Flow tab (RPC nzlxg); accent so the number scans at a
+     * glance, greyed while it is the last known balance rather than a fresh read. */
+    .credits { color: var(--accent); font-weight: 600; }
+    .credits.stale { color: var(--muted); font-weight: 400; }
     .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
     section { padding: 10px 12px; border-bottom: 1px solid var(--border); }
     dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; font-size: 12px; }
@@ -35,15 +41,25 @@
   </style>
 </head>
 <body>
-  <header><b>Flow Hub Worker</b><span class="pill" id="state">…</span></header>
+  <header>
+    <div class="brand">
+      <b>Flow Hub Worker</b>
+      <span class="pill credits" id="credits" title="Số credit Flow của tài khoản đang đăng nhập">💳 —</span>
+    </div>
+    <span class="pill" id="state">…</span>
+  </header>
   <section>
     <dl>
       <dt>Worker ID</dt><dd id="worker-id">—</dd>
       <dt>Tab Flow</dt><dd id="flow">—</dd>
       <dt>Project</dt><dd id="project">—</dd>
+      <dt>Credit</dt><dd id="credits-detail">—</dd>
       <dt>RPC đã chạy</dt><dd id="rpcs">0</dd>
       <dt>Đã quan sát</dt><dd id="observed">0</dd>
     </dl>
+    <div class="row">
+      <button id="refresh-credits">Lấy lại credit</button>
+    </div>
     <div class="error" id="error" hidden></div>
   </section>
   <section>

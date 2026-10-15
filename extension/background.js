@@ -10,6 +10,10 @@
  *     server turns that on) — the Observation log on the server.
  * It never decides anything: request bodies, polling and storage are the
  * server's job, so a Flow update is fixed on the server, not here.
+ *
+ * The one body it builds itself is the credit balance read (nzlxg): a read-only
+ * call the page makes on its own anyway, wanted for the popup and the icon's
+ * tooltip, not asked for by the server.
  */
 
 const VERSION = chrome.runtime.getManifest().version;
@@ -17,6 +21,20 @@ const FLOW_URL = 'https://flow.google.com/';
 const FLOW_TABS = ['https://flow.google.com/*'];
 const BATCH_PATH = '/_/AiSandboxAngularFrontend/data/batchexecute';
 const CAPTCHA_SLOT = '__CAPTCHA__';
+// Balance read: no parameters, answer `[credit, 1, 2, 2, null, credit, [ts, …]]`
+// — slot 0 is the credits left, slot 5 repeats it. Request and response captured
+// from Flow's own page on 2026-10-15 on an account holding 186 credits.
+const RPC_CREDITS = 'nzlxg';
+const CREDITS_FREQ = '[[["nzlxg","[]",null,"generic"]]]';
+// Same set as POLL_RPCS in flowhub/protocol/batch.py — these read state instead
+// of spending credits, so the balance is not re-read after one of them.
+const POLL_RPC_IDS = new Set(['jwpduf', 'Zzl0ze', 'as29s', 'ngNC2', 'nzlxg']);
+// The tooltip has to keep moving while the popup is closed, and a generating RPC
+// costs credits at submit time, not when its answer lands: poll on an alarm, and
+// re-read once after every non-polling RPC.
+const CREDITS_ALARM = 'credits';
+const CREDITS_REFRESH_MINUTES = 0.5;   // Chrome clamps anything shorter to 30 s
+const CREDITS_AFTER_RPC_MS = 1500;
 const MAX_RPC_TEXT = 32000000;      // the project listing alone is past 17 MB
 const MATCH_CONTEXT = 300;          // text kept ahead of a `match` hit: ids Flow stores before the marker
 const OBS_BATCH_URLS = ['https://flow.google.com/*batchexecute*'];
@@ -39,6 +57,10 @@ let reconnectTimer = null;
 let observeCfg = { enabled: true, responses: false };
 const outbox = [];
 const stats = { rpcs: 0, rpcErrors: 0, observed: 0, connectedAt: null };
+// Last balance read for the account signed in on this profile. Memory only: it
+// is a reading, not state the extension owns, and a new session re-reads it.
+const credits = { value: null, ok: false, error: null, at: null };
+let creditsInFlight = null;
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -57,8 +79,12 @@ const ready = (async () => {
 chrome.runtime.onInstalled.addListener(() => ready.then(connect));
 chrome.runtime.onStartup.addListener(() => ready.then(connect));
 chrome.alarms.create('watchdog', { periodInMinutes: 1 });
+chrome.alarms.create(CREDITS_ALARM, { periodInMinutes: CREDITS_REFRESH_MINUTES });
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === 'watchdog' && wsState !== 'open' && wsState !== 'connecting') ready.then(connect);
+  // The tooltip is the only credit indicator on screen while the popup is
+  // closed, so it refreshes on its own whether or not the server is talking.
+  if (a.name === CREDITS_ALARM) refreshCredits();
 });
 
 // ─── connection to the server ───────────────────────────────
@@ -142,7 +168,7 @@ function send(msg) {
 // server likes a fresh view of the Flow tabs anyway.
 async function pushStatus() {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    send({ type: 'status', flow: await flowStatus(), stats });
+    send({ type: 'status', flow: await flowStatus(), stats, credits: { ...credits } });
   }
 }
 setInterval(pushStatus, 20000);
@@ -186,6 +212,9 @@ async function runRpcCommand(msg) {
   }
   if (out.error) stats.rpcErrors++;
   send({ type: 'rpc_result', id: msg.id, ...out });
+  // A generating RPC spends credits at submit time, so re-read shortly after —
+  // but not after the polls, which change nothing and would only add traffic.
+  if (!POLL_RPC_IDS.has(msg.rpcid)) setTimeout(refreshCredits, CREDITS_AFTER_RPC_MS);
 }
 
 async function runFetchCommand(msg) {
@@ -291,6 +320,174 @@ async function runBatchRpc(cmd) {
     || { error: 'PAGE_UNLOADED: tab Flow tải lại hoặc chuyển trang khi đang chờ response' };
   if (out.error) out.sent = (sentReqids.get(String(reqid)) || 0) >= started;
   return out;
+}
+
+// ─── Credits (nzlxg) ───────────────────────────────────────
+
+// The same read-only call the page makes for its own credit counter, run so the
+// popup and the icon's tooltip can show the balance. It goes through runBatchRpc
+// (the cookie and the `at` token only exist in the Flow tab) but on purpose not
+// through runRpcCommand: this is not a job the server asked for, so it must not
+// land in the RPC counters.
+
+/** End of the JSON value starting at `start`, or -1. Strings and escapes respected. */
+function jsonEnd(text, start) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (c === '\\') escaped = true;
+      else if (c === '"') inString = false;
+    } else if (c === '"') {
+      inString = true;
+    } else if (c === '[' || c === '{') {
+      depth++;
+    } else if (c === ']' || c === '}') {
+      if (--depth === 0) return i + 1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * `)]}'` sentinel plus length-prefixed chunks → [{rpcid, data, error}].
+ *
+ * Chunks are located by scanning for JSON values rather than by their length
+ * prefix: once escapes are involved the prefix can disagree with the payload by
+ * a byte, which is exactly why protocol/batch.py parses it this way too. The
+ * `["di",…]`/`["af.httprm",…]` bookkeeping and the trailing `["e",4,…]` chunk
+ * carry no `wrb.fr` entry and are skipped.
+ */
+function decodeEnvelope(text) {
+  const results = [];
+  if (!text) return results;
+  let body = text;
+  if (body.startsWith(")]}'")) {
+    const nl = body.indexOf('\n');
+    if (nl === -1) return results;
+    body = body.slice(nl + 1);
+  }
+  let index = 0;
+  while (index < body.length) {
+    const start = body.indexOf('[', index);
+    if (start === -1) break;
+    const end = jsonEnd(body, start);
+    if (end === -1) break;
+    let chunk;
+    try {
+      chunk = JSON.parse(body.slice(start, end));
+    } catch {
+      index = start + 1;
+      continue;
+    }
+    index = end;
+    if (!Array.isArray(chunk)) continue;
+    for (const entry of chunk) {
+      if (!Array.isArray(entry) || entry[0] !== 'wrb.fr') continue;
+      const rpcid = entry[1] ?? '?';
+      const payload = entry[2];
+      if (payload === null || payload === undefined) {
+        results.push({ rpcid, data: null, error: entry[5] ?? true });
+        continue;
+      }
+      try {
+        results.push({ rpcid, data: typeof payload === 'string' ? JSON.parse(payload) : payload, error: null });
+      } catch {
+        results.push({ rpcid, data: null, error: 'BAD_PAYLOAD_JSON' });
+      }
+    }
+  }
+  return results;
+}
+
+/** Error slot of an envelope → a short reason, the way describe_error does it. */
+function describeRpcError(detail) {
+  const text = JSON.stringify(detail ?? '');
+  const reasons = [...new Set([...text.matchAll(/"([A-Z][A-Z_]{3,})"/g)].map((m) => m[1]))];
+  const code = Array.isArray(detail) && typeof detail[0] === 'number' ? detail[0] : null;
+  const reason = reasons.join(', ') || text.slice(0, 160);
+  return code === null ? reason : `${reason} (code ${code})`;
+}
+
+/**
+ * nzlxg → the credits left. Payload `[186,1,2,2,null,186,[…]]` as captured on
+ * 2026-10-15: slot 0 is the balance and slot 5 repeats it, so slot 0 is read
+ * and slot 5 is the fallback should Flow ever reorder the record.
+ */
+function readCredits(text) {
+  const results = decodeEnvelope(text);
+  const hit = results.find((r) => r.rpcid === RPC_CREDITS);
+  if (!hit) throw new Error(`no ${RPC_CREDITS} envelope (${results.length} others)`);
+  if (hit.error) throw new Error(describeRpcError(hit.error));
+  const value = Array.isArray(hit.data)
+    ? [hit.data[0], hit.data[5]].find((n) => typeof n === 'number')
+    : null;
+  if (value === undefined || value === null) {
+    throw new Error(`unexpected ${RPC_CREDITS} payload: ${JSON.stringify(hit.data)?.slice(0, 160)}`);
+  }
+  return Math.round(value);
+}
+
+async function fetchCredits() {
+  // Never open a tab for this: a profile with no Flow tab open has no account to
+  // read, and runBatchRpc would otherwise spawn one every 30 seconds.
+  if (!(await chrome.tabs.query({ url: FLOW_TABS })).length) return { error: 'NO_FLOW_TAB' };
+  const out = await runBatchRpc({ rpcid: RPC_CREDITS, freq: CREDITS_FREQ });
+  if (out?.error) return { error: out.error };
+  if (out.status && out.status !== 200) return { error: `HTTP ${out.status}` };
+  try {
+    return { value: readCredits(out.text || '') };
+  } catch (e) {
+    return { error: e?.message || String(e) };
+  }
+}
+
+/** One read at a time: the alarm, a finished RPC and the popup can all ask. */
+function refreshCredits() {
+  if (creditsInFlight) return creditsInFlight;
+  creditsInFlight = fetchCredits()
+    .then((result) => {
+      // A failed read keeps the balance that was last known — still this
+      // account's number, just not fresh — and marks it stale rather than
+      // blanking it out.
+      if (result.error) credits.error = result.error;
+      else {
+        credits.value = result.value;
+        credits.error = null;
+      }
+      credits.ok = !result.error;
+      credits.at = Date.now();
+      paintCredits();
+      return credits;
+    })
+    .catch((e) => {
+      console.warn('[FlowHub] credit read', e?.message);
+      return credits;
+    })
+    .finally(() => { creditsInFlight = null; });
+  return creditsInFlight;
+}
+
+function paintCredits() {
+  const known = credits.value !== null;
+  // The toolbar icon must stay clear: Chrome shrinks the icon under a badge, so
+  // a balance like `186` covers it whenever the popup is closed. The number
+  // lives in this tooltip (hover the icon) and in the popup, both of which
+  // always carry it exactly.
+  const title = known
+    ? `Flow Hub Worker — ${credits.value} credit${credits.ok ? '' : ` (cũ: ${credits.error})`}`
+    : `Flow Hub Worker${credits.error ? ` — chưa đọc được credit (${credits.error})` : ''}`;
+  try {
+    // Explicitly clear — not just skip — so a badge painted by an older build
+    // (or by Chrome's default) never lingers over the icon.
+    chrome.action.setBadgeText({ text: '' });
+    chrome.action.setTitle({ title });
+  } catch (e) {
+    console.warn('[FlowHub] credit tooltip', e?.message);
+  }
 }
 
 // ─── Flow tabs ──────────────────────────────────────────────
@@ -539,7 +736,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
       case 'STATUS':
         return { cfg: { ...cfg, token: cfg.token ? '••••' + cfg.token.slice(-4) : '' }, hasToken: !!cfg.token,
           workerId, state: wsState, lastError, stats, flow: await flowStatus(), observe: observeCfg,
-          version: VERSION };
+          credits: { ...credits }, version: VERSION };
+      case 'GET_CREDITS':
+        // The popup asks on open, and on its refresh button, for a reading taken
+        // now rather than the cached one.
+        if (msg.force) await refreshCredits();
+        return { credits: { ...credits } };
       case 'SAVE_CONFIG': {
         cfg = { ...cfg, serverUrl: msg.serverUrl?.trim() || cfg.serverUrl, label: msg.label ?? cfg.label };
         if (msg.token) cfg.token = msg.token.trim();

@@ -7,6 +7,14 @@ export interface WorkerFlow {
   projects?: WorkerFlowProject[];
 }
 
+/** Credit balance of an extension, read from Flow by the worker (RPC nzlxg). */
+export interface WorkerCredits {
+  value?: number | null;
+  ok?: boolean;
+  error?: string | null;
+  at?: number | null;
+}
+
 export interface WorkerStats {
   rpcs?: number;
   observed?: number;
@@ -21,6 +29,7 @@ export interface WorkerInfo {
   last_seen?: number;
   flow?: WorkerFlow;
   stats?: WorkerStats;
+  credits?: WorkerCredits;
 }
 
 export interface JobCounts {

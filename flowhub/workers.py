@@ -44,6 +44,10 @@ class Worker:
         self.version = hello.get("version")
         self.flow: dict = hello.get("flow") or {}
         self.stats: dict = {}
+        # Credit balance read from Flow by the worker (nzlxg), shipped in every
+        # status message. Empty until the first read — the overview and the canvas
+        # cards show `name (💳 186)` from it.
+        self.credits: dict = {}
         self.connected_at = now()
         self.last_seen = now()
         self.pending: dict[str, asyncio.Future] = {}
@@ -54,7 +58,8 @@ class Worker:
 
     def public(self) -> dict:
         return {"id": self.id, "label": self.label, "version": self.version, "online": True,
-                "flow": self.flow, "stats": self.stats, "connected_at": self.connected_at,
+                "flow": self.flow, "stats": self.stats, "credits": self.credits,
+                "connected_at": self.connected_at,
                 "last_seen": self.last_seen, "active_calls": self.active_calls}
 
     @property
@@ -160,8 +165,10 @@ class WorkerHub:
             out.append(worker.public())
             rows.pop(worker.id, None)
         for row in rows.values():
+            info = row.get("info") or {}
             out.append({"id": row["id"], "label": row["label"], "version": row["version"], "online": False,
-                        "flow": (row.get("info") or {}).get("flow") or {}, "last_seen": row["last_seen"]})
+                        "flow": info.get("flow") or {}, "last_seen": row["last_seen"],
+                        "credits": info.get("credits") or {}})
         return out
 
     async def broadcast_config(self) -> None:
@@ -196,6 +203,7 @@ class WorkerHub:
                 elif kind == "status":
                     worker.flow = message.get("flow") or worker.flow
                     worker.stats = message.get("stats") or worker.stats
+                    worker.credits = message.get("credits") or worker.credits
                     self._persist(worker)
                     self.events.publish("worker", worker.public())
                 elif kind == "observe" and self.observations is not None:
@@ -234,7 +242,8 @@ class WorkerHub:
 
     def _persist(self, worker: Worker) -> None:
         self.db.update("workers", "id", worker.id, {"last_seen": now(), "label": worker.label,
-                                                    "info": {"flow": worker.flow, "stats": worker.stats}})
+                                                    "info": {"flow": worker.flow, "stats": worker.stats,
+                                                              "credits": worker.credits}})
 
     # ── convenience used by the engine ──
     async def rpc(self, worker: Worker, rpcid: str, freq: str, captcha_action: Optional[str] = None,

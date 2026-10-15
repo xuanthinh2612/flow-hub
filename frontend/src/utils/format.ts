@@ -1,3 +1,5 @@
+import type { WorkerCredits } from '../api/types';
+
 export function ago(ts?: number | null): string {
   if (!ts) return '';
   const s = Math.max(0, Math.round(Date.now() / 1000 - ts));
@@ -110,5 +112,33 @@ export function getVideoCreditCost(key?: string, duration?: number, resolution?:
   if (key.includes('veo_3_1_') && key.includes('_lite')) return 10;
   if (key.includes('veo_3_1_') && key.includes('_fast')) return 20;
   return 'không xác định';
+}
+
+/** One balance, always written the same way: `186 credit`. */
+export function creditsText(value?: number | null): string {
+  return `${value ?? '—'} credit`;
+}
+
+/**
+ * The extension's name with its credit balance beside it — `Chrome nhà (💳 186)`
+ * — for every place an extension is named, so the balance is visible where the
+ * choice is made: overview, the canvas project cards, Settings.
+ *
+ * Nothing is added while no balance has been read yet (no signed-in
+ * flow.google.com tab, or an extension older than 1.0.4), so the name never
+ * grows a meaningless `(💳 —)`. `stale` marks a number the last read could not
+ * refresh — still that account's balance, just not current.
+ */
+export function extensionLabel(
+  label: string,
+  credits?: WorkerCredits | null,
+): { text: string; stale: boolean; title: string | null } {
+  if (typeof credits?.value !== 'number') return { text: label, stale: false, title: null };
+  const stale = credits.ok === false;
+  return {
+    text: `${label} (💳 ${creditsText(credits.value)})`,
+    stale,
+    title: stale && credits.error ? `Credit chưa cập nhật được: ${credits.error}` : null,
+  };
 }
 

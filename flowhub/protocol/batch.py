@@ -56,9 +56,10 @@ RPC_NAMES: dict[str, str] = {
     RPC_MEDIA: "URL media",
     RPC_UPLOAD_IMAGE: "Upload ảnh",
     RPC_UPSCALE_IMAGE: "Upscale ảnh",
-    # Seen from Flow's UI on 2026-10-07; responses not captured, names guessed.
+    # Seen from Flow's UI on 2026-10-07; names guessed unless a response was captured.
     "ngNC2": "Đọc project (sau mỗi jwpduf)",
-    "nzlxg": "Không tham số (đoán: credits / trạng thái)",
+    # Captured 2026-10-15: payload [credit, 1, 2, 2, null, credit, [ts, …]], slot 0 = credits.
+    "nzlxg": "Số credit tài khoản",
     "WuwhI": "Telemetry (sự kiện UI)",
     "o30O0e": "Hồ sơ người dùng (People API)",
     "mrlkwd": "Đọc project (khi mở)",

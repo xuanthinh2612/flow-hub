@@ -45,6 +45,11 @@ Mở dashboard: <http://127.0.0.1:8787> · tài liệu API: <http://127.0.0.1:87
 3. Bấm icon extension → dán 2 giá trị → **Lưu & kết nối** (trạng thái chuyển "● đã kết nối").
 4. Mở <https://flow.google.com>, đăng nhập, vào (hoặc tạo) một project — giữ tab này mở.
 
+Số credit Flow hiện tại hiện ngay cạnh tên extension trong popup và khi hover icon
+(tiện ích `title`, đọc bằng RPC `nzlxg`): tự làm mới mỗi 30 giây và ngay sau mỗi lần
+tạo, có nút **Lấy lại credit**. Badge trên icon được giữ trống để không che icon.
+Cần ít nhất một tab `flow.google.com` đang đăng nhập.
+
 Mỗi profile Chrome (một tài khoản Google) là một worker; có thể nối nhiều worker vào cùng server.
 
 ## Docker data location

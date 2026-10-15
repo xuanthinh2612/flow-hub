@@ -1,4 +1,4 @@
-import { h, api, toast, copy, field, fill } from '../core.js';
+import { h, api, toast, copy, field, fill, extensionLabel } from '../core.js';
 
 export default {
   title: 'Cài đặt',
@@ -35,7 +35,7 @@ export default {
                 toast('Đã đổi token — dán token mới vào extension', 'ok');
                 load();
               } }, 'Đổi token'))),
-              h('p', { class: 'hint' }, `Worker đang kết nối: ${workers.filter((w) => w.online).map((w) => w.label).join(', ') || 'chưa có'}`)),
+              h('p', { class: 'hint' }, `Worker đang kết nối: ${workers.filter((w) => w.online).map((w) => extensionLabel(w.label, w.credits).text).join(', ') || 'chưa có'}`)),
             h('div', { class: 'card' }, h('h2', null, 'API cho server khác'),
               h('p', { class: 'hint' }, s.auth_enabled ? 'Xác thực: BẬT — gửi header X-API-Key (key in ra console khi server khởi động, hoặc FLOWHUB_API_KEY trong .env).'
                 : 'Xác thực: TẮT (server chỉ nghe trên localhost). Đặt FLOWHUB_AUTH=on hoặc mở ra mạng ngoài sẽ tự bật.'),

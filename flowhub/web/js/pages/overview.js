@@ -1,4 +1,4 @@
-import { h, api, ago, debounce, fill } from '../core.js';
+import { h, api, ago, debounce, fill, extensionName } from '../core.js';
 import { jobTable } from './jobs.js';
 
 const KIND_LABEL = { rpc_new: 'RPC mới', model_new: 'Model mới', model_verified: 'Xác minh', build: 'Build',
@@ -27,7 +27,7 @@ export default {
             h('div', { class: 'card' }, h('h2', null, 'Workers'),
               ...(o.workers.length ? o.workers.map((w) => h('div', { class: 'alert-row' },
                 h('span', { class: `pill ${w.online ? 'ok' : 'err'}` }, w.online ? '● online' : '○ offline'),
-                h('div', null, h('b', null, w.label), h('span', { class: 'muted mono' }, ` ${w.id.slice(0, 8)} · v${w.version || '?'}`),
+                h('div', null, extensionName(w), h('span', { class: 'muted mono' }, ` ${w.id.slice(0, 8)} · v${w.version || '?'}`),
                   h('div', { class: 'muted', style: { fontSize: '12px' } },
                     `${w.flow?.tabs || 0} tab Flow · project ${(w.flow?.projects || [])[0]?.projectId || '—'} · ${w.online ? `kết nối ${ago(w.connected_at)}` : `lần cuối ${ago(w.last_seen)}`}`
                     + (w.stats?.rpcs !== undefined ? ` · ${w.stats.rpcs} RPC, ${w.stats.observed} quan sát` : '')))))

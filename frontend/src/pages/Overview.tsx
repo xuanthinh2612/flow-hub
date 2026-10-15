@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client';
 import { OverviewData } from '../api/types';
-import { ago } from '../utils/format';
+import { ago, extensionLabel } from '../utils/format';
 import { JobTable } from '../components/JobTable';
 import { Link } from 'react-router-dom';
 import { useFlowEvents } from '../api/events';
@@ -141,25 +141,33 @@ export const OverviewPage: React.FC = () => {
           <div className="card">
             <h2>Workers</h2>
             {data.workers?.length ? (
-              data.workers.map((w) => (
-                <div key={w.id} className="alert-row">
-                  <span className={`pill ${w.online ? 'ok' : 'err'}`}>
-                    {w.online ? '● online' : '○ offline'}
-                  </span>
-                  <div>
-                    <b>{w.label}</b>
-                    <span className="muted mono">{` ${w.id.slice(0, 8)} · v${w.version || '?'}`}</span>
-                    <div className="muted" style={{ fontSize: '12px' }}>
-                      {`${w.flow?.tabs || 0} tab Flow · project ${
-                        (w.flow?.projects || [])[0]?.projectId || '—'
-                      } · ${w.online ? `kết nối ${ago(w.connected_at)}` : `lần cuối ${ago(w.last_seen)}`}`}
-                      {w.stats?.rpcs !== undefined
-                        ? ` · ${w.stats.rpcs} RPC, ${w.stats.observed} quan sát`
-                        : ''}
+              data.workers.map((w) => {
+                const ext = extensionLabel(w.label, w.credits);
+                return (
+                  <div key={w.id} className="alert-row">
+                    <span className={`pill ${w.online ? 'ok' : 'err'}`}>
+                      {w.online ? '● online' : '○ offline'}
+                    </span>
+                    <div>
+                      <b
+                        className={ext.stale ? 'ext-label ext-label--stale' : 'ext-label'}
+                        title={ext.title ?? undefined}
+                      >
+                        {ext.text}
+                      </b>
+                      <span className="muted mono">{` ${w.id.slice(0, 8)} · v${w.version || '?'}`}</span>
+                      <div className="muted" style={{ fontSize: '12px' }}>
+                        {`${w.flow?.tabs || 0} tab Flow · project ${
+                          (w.flow?.projects || [])[0]?.projectId || '—'
+                        } · ${w.online ? `kết nối ${ago(w.connected_at)}` : `lần cuối ${ago(w.last_seen)}`}`}
+                        {w.stats?.rpcs !== undefined
+                          ? ` · ${w.stats.rpcs} RPC, ${w.stats.observed} quan sát`
+                          : ''}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             ) : (
               <p className="muted">Chưa có.</p>
             )}
