@@ -58,8 +58,10 @@ export const Layout: React.FC = () => {
     document.title = `${titles[path] || 'Flow Hub'} · Flow Hub`;
   }, [location.pathname]);
 
+  const isCanvasPage = location.pathname.startsWith('/canvas/');
+
   return (
-    <div className="layout">
+    <div className={`layout ${isCanvasPage ? 'canvas-layout' : ''}`}>
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-name">Flow Hub</span>
@@ -122,7 +124,7 @@ export const Layout: React.FC = () => {
           </a>
         </nav>
       </aside>
-      <main id="view">
+      <main id="view" className={isCanvasPage ? 'canvas-mode' : ''}>
         <Outlet />
       </main>
     </div>

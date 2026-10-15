@@ -67,9 +67,9 @@ export const CanvasVideoCreatePage: React.FC = () => {
   return (
     <ReactFlowProvider>
       <div className="canvas-container" style={{ width: '100%', height: '100%', position: 'relative', display: 'flex', flexDirection: 'column' }}>
-        <header className="page-header" style={{ flexShrink: 0, padding: '5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <header className="page-header" style={{ flexShrink: 0, padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
           <Link className="btn btn-sm" to="/canvas">← Dự án</Link>
-          <h2 style={{ margin: 0 }}>{boardName || 'Canvas video'}</h2>
+          <h2 style={{ margin: 0, fontSize: '15px' }}>{boardName || 'Canvas video'}</h2>
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
             {boardId !== null && (
               <>
