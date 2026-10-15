@@ -406,13 +406,18 @@ async def create_canvas_request(body: CanvasRequestCreate, request: Request):
     reference_ids = set()
     for key in ("ref_media_ids", "start_media_ids", "end_media_ids"):
         reference_ids.update(str(value) for value in (body.spec.get(key) or []) if value)
-    for key in ("start_media_id", "end_media_id", "base_media_id"):
+    for key in ("start_media_id", "end_media_id", "base_media_id", "source_media_id"):
         if body.spec.get(key):
             reference_ids.add(str(body.spec[key]))
     for media_id in reference_ids:
         media = core.db.one("SELECT workspace_id FROM media WHERE id=?", (media_id,))
         if not media or media["workspace_id"] != project["public_id"]:
             raise HTTPException(400, "ảnh tham chiếu không thuộc project canvas hiện tại")
+    # For extend_video: additionally validate that source_media_id is a video.
+    if body.spec.get("type") == "extend_video" and body.spec.get("source_media_id"):
+        src_vid = core.db.one("SELECT kind FROM media WHERE id=?", (str(body.spec["source_media_id"]),))
+        if not src_vid or src_vid["kind"] != "video":
+            raise HTTPException(400, "source_media_id phải là video để kéo dài")
     extract_video_ids = set(str(value) for value in (body.spec.get("extract_video_ids") or []) if value)
     if body.spec.get("extract_start_video_id"):
         extract_video_ids.add(str(body.spec["extract_start_video_id"]))

@@ -1438,7 +1438,7 @@ export function NodeCard(props: NodeProps<FlowNode>) {
         <span className="node-icon" aria-hidden="true">{ICON[data.type] ?? "□"}</span>
         <span className="node-title">{data.title}</span>
         {videoInfo && (() => {
-          let displayMode = videoInfo.mode;
+          let displayMode: string = videoInfo.mode;
           if (videoInfo.mode === "t2v") {
             const independentMediaIds = data.generation?.independentVideoMediaIds as string[] | undefined;
             const independentVideoMode = data.generation?.independentVideoMode as string | undefined;
@@ -1452,8 +1452,11 @@ export function NodeCard(props: NodeProps<FlowNode>) {
           } else if (videoInfo.mode === "i2v" || videoInfo.mode === "video_continuation") {
             const connectedVideoMode = data.generation?.connectedVideoMode as string | undefined;
             const r2vAdditionalMediaIds = data.generation?.r2vAdditionalMediaIds as string[] | undefined;
+            const videoExtendMode = data.generation?.videoExtendMode as string | undefined;
             if ((r2vAdditionalMediaIds && r2vAdditionalMediaIds.length > 0) || connectedVideoMode === "r2v") {
               displayMode = "r2v";
+            } else if (videoInfo.mode === "video_continuation" && videoInfo.sourceNodeFamily === "veo" && (videoExtendMode === "extend" || data.generation?.videoMode === "extend_video")) {
+              displayMode = "extend";
             } else {
               displayMode = "i2v";
             }

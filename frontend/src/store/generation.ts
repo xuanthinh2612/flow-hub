@@ -17,6 +17,7 @@ import {
 } from "./chainRules";
 import { useSettingsStore, type MediaProviderKey } from "./settings";
 import { writeNodeGenerationNow } from "../utils/nodeGenerationSettings";
+import { getVideoUpstreamInfo } from "../utils/videoFrame";
 
 // The busy-node rule the header buttons read is a pure function of its
 // arguments; re-exported here so UI code has one import for the store and
@@ -86,7 +87,7 @@ interface GenerationState {
       aspectRatio?: string;
       paygateTier?: string;
       kind?: "image" | "video";
-      videoMode?: "t2v" | "i2v" | "r2v";
+      videoMode?: "t2v" | "i2v" | "r2v" | "extend_video";
       cameraMode?: "static" | "dynamic";
       sourceMediaId?: string;
       sourceVideoId?: string;
@@ -314,10 +315,12 @@ const MEDIA_PRODUCING_TYPES = new Set([
   "gen_video",
   "gen_video_omni",
   "gen_video_text",
+  "gen_video_extend",
   "t2v",
   "i2v",
   "image",
   "edit_image",
+  "extend_video",
 ]);
 
 // ── Poll loop ────────────────────────────────────────────────────────────
@@ -946,7 +949,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     const selectedImageModel = configuredModel?.family === "image" && configuredModel.id ? configuredModel.id : settings.imageModel;
     const incomingCanvasSource = useBoardStore.getState().edges.some((edge) => edge.target === rfId);
     const effectiveVideoMode = opts.videoMode ?? (incomingCanvasSource
-      ? previousGeneration.connectedVideoMode ?? (previousGeneration.videoMode === "r2v" ? "r2v" : "i2v")
+      ? (previousGeneration.videoMode === "extend_video" ? "extend_video" : (previousGeneration.connectedVideoMode ?? (previousGeneration.videoMode === "r2v" ? "r2v" : "i2v")))
       : previousGeneration.independentVideoMode ?? previousGeneration.videoMode ?? "t2v");
     const effectiveAspectRatio = previousGeneration.aspectRatio ?? opts.aspectRatio ?? (kind === "video"
       ? selectedVideoFamily === "omni_flash" ? "VIDEO_ASPECT_RATIO_PORTRAIT" : "VIDEO_ASPECT_RATIO_LANDSCAPE"
@@ -961,6 +964,8 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
               family: "omni_flash",
               id: configuredModel?.id ?? `abra_r2v_${selectedDuration}s${selectedResolution === "360p" ? "_360p" : ""}`,
             }
+          : effectiveVideoMode === "extend_video"
+          ? { family: "veo", id: "veo_3_1_extension_lite" }
           : { ...(configuredModel?.id ? { id: configuredModel.id } : {}), family: "veo", quality: selectedQuality }
         : { family: "image", id: selectedImageModel },
       ...(kind === "video" && selectedVideoFamily === "omni_flash"
@@ -1020,8 +1025,38 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         const isOmni = generation.model?.family === "omni_flash";
         const videoMode = effectiveVideoMode;
 
+        // ── Extend video (fZytfe / Veo Extension Lite) ────────────────
+        if (videoMode === "extend_video") {
+          let sourceMediaId = opts.sourceMediaId;
+          if (!sourceMediaId) {
+            const { nodes, edges } = useBoardStore.getState();
+            const info = getVideoUpstreamInfo(rfId, nodes, edges);
+            sourceMediaId = info.sourceMediaId;
+          }
+          if (!sourceMediaId && !hasPendingUpstreamGeneration(rfId)) {
+            const error = "extend_video cần source_media_id (video gốc để kéo dài)";
+            useBoardStore.getState().updateNodeData(rfId, { status: "error", error });
+            if (!isNaN(nodeDbId)) await patchNode(nodeDbId, { status: "error", data: { error } }).catch(() => {});
+            set({ error: "Vui lòng chọn video gốc để kéo dài." });
+            return;
+          }
+          reqDto = await createRequest({
+            type: "gen_video_extend",
+            node_id: isNaN(nodeDbId) ? rfId : nodeDbId,
+            params: {
+              prompt: opts.prompt,
+              media_provider: mediaProvider,
+              project_id: projectId,
+              source_media_id: sourceMediaId,
+              aspect_ratio: effectiveAspectRatio,
+              paygate_tier: opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
+              variant_count: variantCount,
+            },
+          });
+        }
+
         // Both Omni Flash and Veo's r2v mode take ingredients (ref_media_ids)
-        if (isOmni || videoMode === "r2v") {
+        else if (isOmni || videoMode === "r2v") {
           const upstreamSources = opts.sourceMediaIds || opts.sourceVideoIds
             ? []
             : collectUpstreamVideoGenerationSources(rfId);

@@ -427,3 +427,63 @@ def test_generated_image_chain_still_waits_when_it_has_no_media_yet(client):
     job_id = core.db.one("SELECT job_id FROM canvas_requests WHERE id=?", (res.json()["id"],))["job_id"]
     deps = core.jobs.get(job_id)["spec"]["canvas_dependencies"]
     assert [d["source_node_id"] for d in deps] == [upstream]
+
+
+def test_extend_video_canvas_chain(client):
+    """Test canvas chain for extend_video:
+    1. Downstream extend_video node can depend on upstream running video node.
+    2. When upstream finishes, _wait_canvas_dependencies injects source_media_id.
+    """
+    board = make_board(client)
+    core = client.app.state.core
+    public_id = core.db.one("SELECT public_id FROM canvas_boards WHERE id=?", (board,))["public_id"]
+
+    upstream_video = make_node(client, board, node_type="video")
+    downstream_extend = make_node(client, board, node_type="video")
+    make_edge(client, board, upstream_video, downstream_extend)
+
+    up_job, up_req = make_job(core, upstream_video, status="running")
+
+    # Submit extend_video request while upstream is still running
+    res = client.post("/api/canvas/requests", json={
+        "type": "gen_video_extend",
+        "node_id": str(downstream_extend),
+        "params": {"prompt": "extend action"},
+        "spec": {
+            "type": "extend_video",
+            "family": "veo",
+            "prompt": "extend action",
+            "aspect": "16:9",
+            "count": 1,
+        },
+        "workspace_id": public_id,
+    })
+    assert res.status_code == 201, res.text
+    down_job_id = core.db.one("SELECT job_id FROM canvas_requests WHERE id=?", (res.json()["id"],))["job_id"]
+
+    # Verify dependency on upstream
+    down_job = core.jobs.get(down_job_id)
+    deps = down_job["spec"]["canvas_dependencies"]
+    assert len(deps) == 1
+    assert deps[0]["source_node_id"] == upstream_video
+    assert deps[0]["source_type"] == "video"
+
+    # Now upstream finishes with a media id
+    vid_media_id = "test-vid-12345"
+    core.db.insert("media", {
+        "id": vid_media_id, "kind": "video", "url": "http://media/test.mp4",
+        "workspace_id": public_id, "created_at": 1.0,
+    })
+    core.db.update("jobs", "id", up_job, {
+        "status": "done",
+        "results": [{"media_id": vid_media_id}],
+    })
+
+    # Resolve dependencies
+    asyncio.run(core.jobs._wait_canvas_dependencies(core.jobs.get(down_job_id)))
+
+    # Verify that source_media_id was injected into the extend_video spec
+    updated_down_job = core.jobs.get(down_job_id)
+    assert updated_down_job["spec"]["source_media_id"] == vid_media_id
+    assert "canvas_dependencies" not in updated_down_job["spec"]
+

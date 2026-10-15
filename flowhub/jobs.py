@@ -202,7 +202,7 @@ class JobEngine:
         s["extract_video_ids"] = [str(m) for m in (s.get("extract_video_ids") or []) if m]
         if kind == "r2v" and not refs and not s["extract_video_ids"] and not s.get("canvas_dependencies"):
             raise ValueError("r2v cần ít nhất 1 ref_media_ids")
-        if kind == "extend_video" and not (s.get("source_media_id") or s.get("media_id")):
+        if kind == "extend_video" and not (s.get("source_media_id") or s.get("media_id")) and not s.get("canvas_dependencies"):
             raise ValueError("extend_video cần source_media_id (video để kéo dài)")
         # Normalise aliases: accept media_id as source_media_id for compatibility.
         if kind == "extend_video" and not s.get("source_media_id") and s.get("media_id"):
@@ -717,13 +717,22 @@ class JobEngine:
         for dep, media_id in resolved:
             is_video = dep.get("source_type") == "video"
             kind = spec.get("type")
-            if kind in IMAGE_TYPES:
+            if kind == "extend_video":
+                # The single upstream video node provides the clip to extend.
+                # source_media_id is a scalar — just set it; dedupe not needed.
+                if is_video:
+                    old_ids = set(dep.get("previous_media_ids") or [])
+                    if not old_ids or spec.get("source_media_id") in old_ids:
+                        spec["source_media_id"] = media_id
+            elif kind in IMAGE_TYPES:
                 key = "extract_video_ids" if is_video else "ref_media_ids"
             elif kind == "i2v":
                 key = "extract_video_ids" if is_video else "start_media_ids"
             elif kind == "r2v":
                 key = "extract_video_ids" if is_video else "ref_media_ids"
             else:
+                continue
+            if kind == "extend_video":
                 continue
             old_ids = set(dep.get("previous_media_ids") or [])
             if old_ids:

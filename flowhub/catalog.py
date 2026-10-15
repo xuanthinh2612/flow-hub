@@ -163,7 +163,10 @@ class Catalog:
     def resolve(self, mode: str, family: Optional[str] = None, aspect: Optional[str] = None,
                 duration: Optional[int] = None, resolution: Optional[str] = None) -> dict:
         """Pick the wire id for a family + attributes. Raises ValueError with what exists."""
-        family = family or self.default_family(mode)
+        if mode == "extend_video" and (not family or family == "veo"):
+            family = "veo_3_1_extension_lite"
+        else:
+            family = family or self.default_family(mode)
         rows = [r for r in self.rows(mode) if r["family"] == family and r["status"] != "disabled"]
         if not rows:
             raise ValueError(f"không có model nào cho mode={mode} family={family}")

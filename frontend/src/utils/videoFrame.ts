@@ -1,7 +1,7 @@
-﻿import type { FlowNode } from '../store/board';
+import type { FlowNode } from '../store/board';
 import type { Edge } from '@xyflow/react';
 
-export type VideoModeType = 't2v' | 'i2v' | 'video_continuation' | 'r2v';
+export type VideoModeType = 't2v' | 'i2v' | 'video_continuation' | 'extend_video' | 'r2v';
 
 export interface VideoUpstreamInfo {
   mode: VideoModeType;
@@ -12,6 +12,9 @@ export interface VideoUpstreamInfo {
   isVideoUpstream: boolean;
   isImageUpstream: boolean;
   upstreamNodes: FlowNode[];
+  /** Family of the single upstream video node (if mode is video_continuation).
+   *  Derived from node.data.generation?.model?.family. */
+  sourceNodeFamily?: string | undefined;
 }
 
 export function getVideoUpstreamInfo(
@@ -51,6 +54,13 @@ export function getVideoUpstreamInfo(
       sourceMediaId = variants[0];
     }
     const denseMids = variants.length > 0 ? variants : (sourceMediaId ? [sourceMediaId] : []);
+    // Detect the family of the upstream video so the dialog can offer
+    // extend_video (Veo-only) vs video_continuation (model-agnostic).
+    const gen = sourceNode.data.generation as any;
+    const rawFamily = gen?.model?.family ?? gen?.videoModel;
+    const sourceNodeFamily: string | undefined = isVideo
+      ? (rawFamily === 'omni_flash' ? 'omni_flash' : 'veo')
+      : undefined;
 
     return {
       mode: isVideo ? 'video_continuation' : 'i2v',
@@ -61,6 +71,7 @@ export function getVideoUpstreamInfo(
       isVideoUpstream: isVideo,
       isImageUpstream: !isVideo,
       upstreamNodes,
+      sourceNodeFamily,
     };
   }
 

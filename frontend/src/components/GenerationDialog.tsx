@@ -279,6 +279,10 @@ type GenerationFormState = {
   independentVideoMediaIds: string[];
   independentVideoMode: "i2v" | "r2v";
   connectedVideoMode: "i2v" | "r2v";
+  /** Only relevant when upstream is a single Veo video node (video_continuation context).
+   *  "continuation" = extract last frame (existing behaviour).
+   *  "extend" = call fZytfe Veo Extension Lite. */
+  videoExtendMode: "continuation" | "extend";
   r2vAdditionalMediaIds: string[];
   backend: MediaProviderKey;
   imageModel: ImageModelKey;
@@ -332,6 +336,10 @@ export function GenerationDialog() {
   const [independentVideoMediaIds, setIndependentVideoMediaIds] = useState<string[]>([]);
   const [independentVideoMode, setIndependentVideoMode] = useState<"i2v" | "r2v">("i2v");
   const [connectedVideoMode, setConnectedVideoMode] = useState<"i2v" | "r2v">("i2v");
+  /** Whether the user chose to continue the clip (extract last frame) or
+   *  extend it via fZytfe (Veo Extension Lite). Only applies when upstream
+   *  is a single Veo video. */
+  const [videoExtendMode, setVideoExtendMode] = useState<"continuation" | "extend">("continuation");
   const [r2vAdditionalMediaIds, setR2vAdditionalMediaIds] = useState<string[]>([]);
 
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -441,6 +449,8 @@ export function GenerationDialog() {
   const isEffectiveR2v = isVideo && (
     (videoInfo?.mode === "i2v" || videoInfo?.mode === "r2v") && actualConnectedMode === "r2v"
   );
+  const isUpstreamVeoVideo = videoInfo?.mode === "video_continuation" && videoInfo.sourceNodeFamily === "veo";
+  const isExtend = isUpstreamVeoVideo && videoExtendMode === "extend";
   // Prompt nodes are text-only — clicking Generate runs auto_prompt
   // synthesis from upstream context and writes the result back to
   // node.data.generation.prompt. No image dispatch, no aspect/variants.
@@ -690,6 +700,9 @@ export function GenerationDialog() {
       setConnectedVideoMode(
         savedForm.connectedVideoMode ?? "i2v",
       );
+      setVideoExtendMode(
+        (savedForm as any).videoExtendMode === "extend" ? "extend" : "continuation",
+      );
       setR2vAdditionalMediaIds(
         savedForm.r2vAdditionalMediaIds ?? [],
       );
@@ -731,6 +744,7 @@ export function GenerationDialog() {
       independentVideoMediaIds,
       independentVideoMode,
       connectedVideoMode,
+      videoExtendMode,
       r2vAdditionalMediaIds,
       backend: mediaProvider,
       imageModel,
@@ -761,9 +775,10 @@ export function GenerationDialog() {
         independentVideoMediaIds: draft.independentVideoMediaIds,
         independentVideoMode: draft.independentVideoMode,
         connectedVideoMode: draft.connectedVideoMode,
-        videoMode: useBoardStore.getState().edges.some((edge) => edge.target === rfId)
-          ? draft.connectedVideoMode
-          : draft.independentVideoMode,
+        videoExtendMode: draft.videoExtendMode,
+        videoMode: (useBoardStore.getState().edges.some((edge) => edge.target === rfId)
+          ? (videoInfo?.mode === "video_continuation" && videoInfo.sourceNodeFamily === "veo" && draft.videoExtendMode === "extend" ? "extend_video" : draft.connectedVideoMode)
+          : draft.independentVideoMode) as "t2v" | "i2v" | "r2v" | "extend_video",
         r2vAdditionalMediaIds: draft.r2vAdditionalMediaIds,
         ...(draft.videoModel === "omni_flash"
           ? { duration: draft.omniFlashDuration, resolution: draft.omniFlashResolution }
@@ -1058,15 +1073,33 @@ export function GenerationDialog() {
         return;
       }
 
-      // 2. Nối tiếp video (lấy frame cuối cùng của video trước)
+      // 2. Nối tiếp video (lấy frame cuối cùng của video trước) hoặc Extend video (Veo Extension Lite)
       if (videoInfo?.mode === "video_continuation") {
         if (!videoInfo.sourceMediaId && !hasPendingUpstream) {
-          useBoardStore.getState().updateNodeData(rfId, { extractError: "Video trước chưa có file để trích xuất frame cuối." });
+          useBoardStore.getState().updateNodeData(rfId, {
+            extractError: isExtend
+              ? "Video trước chưa có file để kéo dài."
+              : "Video trước chưa có file để trích xuất frame cuối.",
+          });
           return;
         }
 
         closeGenerationDialog();
         useBoardStore.getState().updateNodeData(rfId, { extractingFrame: false, extractError: null });
+
+        if (isExtend) {
+          dispatchGeneration(rfId, {
+            prompt: videoPrompt,
+            aspectRatio,
+            kind: "video",
+            cameraMode: camera,
+            videoMode: "extend_video",
+            sourceMediaId: videoInfo.sourceMediaId,
+            variantCount: variants,
+          });
+          return;
+        }
+
         dispatchGeneration(rfId, {
           prompt: videoPrompt,
           aspectRatio,
@@ -1160,7 +1193,7 @@ export function GenerationDialog() {
       : videoInfo?.mode === "video_continuation"
       ? (Boolean(videoInfo.sourceMediaId) || hasPendingUpstream) &&
         (videoInfo.sourceNode?.data.status === "done" || hasPendingUpstream) &&
-        !extractingFrame
+        (isExtend ? true : !extractingFrame)
       : (isEffectiveR2v
           ? (refSourceNodes.length > 0 || r2vAdditionalMediaIds.length > 0 || hasPendingUpstream)
           : (selectedSourceIdx.size > 0 || hasPendingUpstream)) && !extractingFrame);
@@ -1198,7 +1231,9 @@ export function GenerationDialog() {
                       ? "Tạo video từ Ảnh (i2v)"
                       : "Tạo video từ Ingredients (r2v)"
                   : videoInfo?.mode === "video_continuation"
-                  ? "Nối tiếp video (Frame cuối)"
+                  ? isExtend
+                    ? "Kéo dài video (Extend Video)"
+                    : "Nối tiếp video (Frame cuối)"
                   : "Tạo video từ Ảnh (i2v)"
                 : isCharacter
                 ? "Generate character"
@@ -1211,8 +1246,8 @@ export function GenerationDialog() {
             <span className="gen-dialog__subtitle">
               Node #{node?.data.shortId ?? rfId}
               {isVideo && videoInfo && (
-                <span className={`gen-dialog__mode-badge gen-dialog__mode-badge--${videoInfo.mode === "t2v" ? independentVideoEffectiveMode : videoInfo.mode}`}>
-                  {videoInfo.mode === "t2v" ? independentVideoModeLabel : videoInfo.label}
+                <span className={`gen-dialog__mode-badge gen-dialog__mode-badge--${videoInfo.mode === "t2v" ? independentVideoEffectiveMode : (isExtend ? "extend" : videoInfo.mode)}`}>
+                  {videoInfo.mode === "t2v" ? independentVideoModeLabel : (isExtend ? "Extend video (Veo)" : videoInfo.label)}
                 </span>
               )}
             </span>
@@ -1258,7 +1293,9 @@ export function GenerationDialog() {
                         ? "Bỏ trống để tự sinh motion prompt từ source image ✨ hoặc nhập prompt…"
                         : "Bỏ trống để tự sinh motion prompt từ các source images ✨ hoặc nhập prompt…"
                     : videoInfo?.mode === "video_continuation"
-                    ? "Nhập mô tả diễn biến tiếp theo sau frame cuối của video trước…"
+                    ? isExtend
+                      ? "Nhập mô tả diễn biến tiếp theo để kéo dài video (Veo Extension)…"
+                      : "Nhập mô tả diễn biến tiếp theo sau frame cuối của video trước…"
                     : "Bỏ trống để tự sinh motion prompt từ source image ✨ hoặc nhập prompt…"
                   : isPrompt
                   ? "Nhập prompt mồi để feed cho downstream image / video…"
@@ -1427,12 +1464,30 @@ export function GenerationDialog() {
               <div className="source-info-box source-info-box--continuation">
                 <div className="source-info-box__header">
                   <span className="source-info-box__icon">🎬</span>
-                  <div className="source-info-box__content">
-                    <span className="source-info-box__title">
-                      Nối tiếp Video #{videoInfo.sourceNode?.data.shortId}
-                    </span>
+                  <div className="source-info-box__content" style={{ width: '100%' }}>
+                    <div className="gen-dialog__label-row" style={{ alignItems: 'center' }}>
+                      <span className="source-info-box__title">
+                        {isExtend
+                          ? `Kéo dài Video #${videoInfo.sourceNode?.data.shortId}`
+                          : `Nối tiếp Video #${videoInfo.sourceNode?.data.shortId}`}
+                      </span>
+                      {isUpstreamVeoVideo && (
+                        <select
+                          className="source-select-mini"
+                          value={videoExtendMode}
+                          onChange={(e) => setVideoExtendMode(e.target.value as "continuation" | "extend")}
+                          disabled={isWorking}
+                          style={{ padding: '2px 8px', borderRadius: '4px', background: '#333', color: '#fff', border: 'none' }}
+                        >
+                          <option value="continuation">Nối tiếp (Frame cuối)</option>
+                          <option value="extend">Kéo dài (Extend video)</option>
+                        </select>
+                      )}
+                    </div>
                     <p className="source-info-box__desc">
-                      Frame cuối cùng của video trước sẽ được tự động trích xuất làm điểm bắt đầu (start frame) cho video này.
+                      {isExtend
+                        ? "Kéo dài video trực tiếp bằng Veo Extension Lite (fZytfe). Giữ liền mạch bối cảnh và chuyển động của video gốc."
+                        : "Frame cuối cùng của video trước sẽ được tự động trích xuất làm điểm bắt đầu (start frame) cho video này."}
                     </p>
                   </div>
                 </div>
@@ -1450,7 +1505,9 @@ export function GenerationDialog() {
                       preload="metadata"
                     />
                     <span className="source-continuation-tag">
-                      ✓ Sẵn sàng trích xuất frame cuối khi bấm Generate
+                      {isExtend
+                        ? "✓ Sẵn sàng extend video (Veo 3.1 Extension Lite)"
+                        : "✓ Sẵn sàng trích xuất frame cuối khi bấm Generate"}
                     </span>
                   </div>
                 )}
@@ -1774,7 +1831,17 @@ export function GenerationDialog() {
 
         {/* Model picker comes first so selecting Omni reveals its options
             directly below. */}
-        {isVideo && (
+        {isVideo && isExtend ? (
+          <div className="gen-dialog__field">
+            <span className="gen-dialog__label">
+              Model
+              <InfoTip tip="Veo 3.1 Extension Lite (fZytfe): Model chuyên dụng của Flow để kéo dài video clip đã có." />
+            </span>
+            <div style={{ padding: '8px 12px', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '6px', fontSize: '13px', color: '#fff' }}>
+              Veo 3.1 Extension Lite (fZytfe)
+            </div>
+          </div>
+        ) : isVideo && (
           <div className="gen-dialog__field">
             <span className="gen-dialog__label">
               Model

@@ -39,7 +39,7 @@ export interface NodeGeneration extends Record<string, unknown> {
   resolution?: string | null;
   duration?: number | null;
   camera?: "static" | "dynamic";
-  videoMode?: "t2v" | "i2v" | "r2v";
+  videoMode?: "t2v" | "i2v" | "r2v" | "extend_video";
   operation?: string;
   prompts?: string[];
   prompt?: string;
@@ -53,6 +53,7 @@ export interface NodeGeneration extends Record<string, unknown> {
   independentVideoMediaIds?: string[];
   independentVideoMode?: "i2v" | "r2v";
   connectedVideoMode?: "i2v" | "r2v";
+  videoExtendMode?: "continuation" | "extend";
   r2vAdditionalMediaIds?: string[];
   t2vLibraryMediaId?: string | null;
   t2vLibraryMediaItem?: unknown;

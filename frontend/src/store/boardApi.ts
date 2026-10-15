@@ -196,6 +196,18 @@ export async function createRequest(input: {
       extract_video_ids: params.extract_video_ids || [],
       prompts: params.prompts,
     };
+  } else if (type === "gen_video_extend") {
+    // Extend an existing Veo clip (fZytfe). source_media_id is the video
+    // to continue; prompt describes the next motion.
+    spec = {
+      type: "extend_video",
+      model: "veo_3_1_extension_lite",
+      family: "veo",
+      prompt: params.prompt,
+      source_media_id: params.source_media_id,
+      aspect: params.aspect_ratio === "VIDEO_ASPECT_RATIO_PORTRAIT" ? "9:16" : "16:9",
+      count: Number(params.variant_count) || 1,
+    };
   } else {
     spec = {
       type: "image",
