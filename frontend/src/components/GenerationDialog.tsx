@@ -974,6 +974,8 @@ export function GenerationDialog() {
   }
 
   async function handleSubmit() {
+    // FIX(bug 1): Keep keyboard submits behind the same readiness guard as the button.
+    if (!canGenerate) return;
     if (!rfId) return;
     // Defense in depth — block submit if the LLM layer is still composing
     // for this node from a prior dialog session. The Generate button is
@@ -1055,6 +1057,8 @@ export function GenerationDialog() {
     if (!finalPrompt.trim()) {
       const dbId = parseInt(rfId, 10);
       if (isNaN(dbId)) {
+        // FIX(bug 8): Surface invalid node ids instead of silently ignoring auto-prompt.
+        useGenerationStore.setState({ error: "Auto-prompt failed: invalid node id" });
         return;
       }
       setAutoBuilding(true);
@@ -1066,11 +1070,6 @@ export function GenerationDialog() {
         if (!isVideo && variants > 1) {
           const res = await autoPromptBatchApi(dbId, variants);
           perVariantPrompts = res.prompts;
-          // Show all N prompts joined so the user can verify before
-          // dispatch — we don't dispatch until they re-click Generate
-          // (so they see what was synthesised first time around either)…
-          // actually simpler: dispatch immediately with the first as the
-          // "display" prompt; full per-variant list goes through opts.
           finalPrompt = res.prompts[0] ?? "";
           setPrompt(res.prompts.join("\n\n— variant —\n\n"));
         } else {
@@ -1284,8 +1283,9 @@ export function GenerationDialog() {
           ? (refSourceNodes.length > 0 || r2vAdditionalMediaIds.length > 0 || hasPendingUpstream)
           : (selectedSourceIdx.size > 0 || hasPendingUpstream)) && !extractingFrame);
 
+  // FIX(bug 2): Keep character generation disabled while any work is running.
   const canGenerate = isCharacter
-    ? charGender !== null || charCountry !== null || charExtras.trim().length > 0
+    ? (charGender !== null || charCountry !== null || charExtras.trim().length > 0) && !isWorking
     : isVideo
     ? isVideoReady && !isWorking
     : !isWorking;
@@ -1489,9 +1489,9 @@ export function GenerationDialog() {
                 </label>
                 <span className="gen-dialog__char-count">{charExtras.length}/200</span>
               </div>
+              {/* FIX(bug 5): Leave the initial focus target on the main prompt only. */}
               <textarea
                 id="gen-char-extras"
-                ref={firstFocusRef}
                 className="gen-dialog__textarea"
                 rows={3}
                 value={charExtras}
