@@ -44,6 +44,11 @@ export function resolveVideoMode(input: ResolveVideoModeInput): ResolvedVideoMod
     connectedVideoMode,
   } = input;
 
+  const hasUpstreamVideo = (videoInfo?.upstreamVideoNodes?.length ?? (videoInfo?.mode === "video_continuation" ? 1 : 0)) === 1;
+  const hasNoUpstream = (videoInfo?.upstreamNodes?.length ?? 0) === 0;
+  const isVideoRefAllowed = hasNoUpstream || hasUpstreamVideo;
+  const isVideoRefActive = isOmniVideo && omniVideoMode === "video_reference" && isVideoRefAllowed;
+
   const independentVideoEffectiveMode =
     isOmniVideo && omniVideoMode === "video_reference"
       ? "video_reference"
@@ -53,15 +58,18 @@ export function resolveVideoMode(input: ResolveVideoModeInput): ResolvedVideoMod
           ? independentVideoMode
           : "t2v";
   const actualConnectedMode =
-    videoInfo?.mode === "i2v"
-      ? totalConnectedSources >= 2
-        ? "r2v"
-        : connectedVideoMode
-      : videoInfo?.mode === "video_continuation"
-        ? connectedVideoMode
-      : videoInfo?.mode;
+    isVideoRefActive && !hasNoUpstream
+      ? "video_reference"
+      : videoInfo?.mode === "i2v"
+        ? totalConnectedSources >= 2
+          ? "r2v"
+          : connectedVideoMode
+        : videoInfo?.mode === "video_continuation"
+          ? connectedVideoMode
+        : videoInfo?.mode;
   const isEffectiveR2v =
     isVideo &&
+    !isVideoRefActive &&
     (videoInfo?.mode === "i2v" || videoInfo?.mode === "r2v" || videoInfo?.mode === "video_continuation") &&
     actualConnectedMode === "r2v";
   const isUpstreamVeoVideo =
@@ -75,7 +83,9 @@ export function resolveVideoMode(input: ResolveVideoModeInput): ResolvedVideoMod
     videoExtendMode === "extend";
 
   let videoUiKey: VideoUiKey;
-  if (isEffectiveR2v || videoInfo?.mode === "r2v") {
+  if (isVideoRefActive) {
+    videoUiKey = "video_reference";
+  } else if (isEffectiveR2v || videoInfo?.mode === "r2v") {
     videoUiKey = "connected";
   } else if (isOmniVideo && omniVideoMode === "video_reference") {
     videoUiKey = "video_reference";
@@ -145,12 +155,14 @@ export function canSubmitVideo(input: CanSubmitVideoInput): boolean {
     selectedSourceCount,
   } = input;
 
+  const hasUpstreamVideo = (videoInfo?.upstreamVideoNodes?.length ?? (videoInfo?.mode === "video_continuation" ? 1 : 0)) === 1;
+
   return (
     !isVideo ||
     (!isEffectiveR2v && isOmniVideo && omniVideoMode === "video_reference"
       ? (Boolean(videoReferenceMediaId) ||
-          (videoInfo?.mode === "video_continuation" &&
-            (Boolean(videoInfo.sourceMediaId) || hasPendingUpstream))) &&
+          ((videoInfo?.mode === "video_continuation" || Boolean(videoInfo?.sourceMediaId) || hasUpstreamVideo) &&
+            (Boolean(videoInfo?.sourceMediaId) || hasPendingUpstream))) &&
         !extractingFrame
       : videoInfo?.mode === "t2v"
         ? (prompt.trim().length > 0 || independentVideoMediaIds.length > 0) &&

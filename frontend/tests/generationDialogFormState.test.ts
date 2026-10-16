@@ -184,20 +184,20 @@ test("serializeForm sets abra_t2v model ID for t2v mode and abra_r2v for r2v mod
   assert.deepEqual(r2vSerialized.model, { family: "omni_flash", id: "abra_r2v_8s_360p" });
 });
 
-test("hydrateForm does not lock to video_reference when multiple sources are connected", () => {
+test("hydrateForm does not lock to video_reference when multiple video sources are connected", () => {
   const targetVideo = node("target", "video", {
     videoMode: "video_reference",
     model: { family: "omni_flash", id: "abra_edit" },
   });
-  const sourceVideo = node("source-vid", "video", {}, ["vid-1"]);
-  const sourceImage = node("source-img", "image", {}, ["img-1"]);
+  const sourceVideo1 = node("source-vid-1", "video", {}, ["vid-1"]);
+  const sourceVideo2 = node("source-vid-2", "video", {}, ["vid-2"]);
 
   const hydrated = hydrateForm({
     rfId: "target",
-    nodes: [targetVideo, sourceVideo, sourceImage],
+    nodes: [targetVideo, sourceVideo1, sourceVideo2],
     edges: [
-      { id: "e1", source: "source-vid", target: "target" },
-      { id: "e2", source: "source-img", target: "target" },
+      { id: "e1", source: "source-vid-1", target: "target" },
+      { id: "e2", source: "source-vid-2", target: "target" },
     ],
     defaults,
     seedPrompt: "test",
@@ -222,6 +222,30 @@ test("hydrateForm does not lock to video_reference when multiple sources are con
   // Must serialize as abra_r2v instead of abra_edit even if omniVideoMode was set
   assert.equal((r2vSerialized.model as { id: string })?.id, "abra_r2v_8s");
   assert.equal(r2vSerialized.videoMode, "r2v");
+});
+
+test("hydrateForm preserves video_reference when 1 video and image sources are connected", () => {
+  const targetVideo = node("target", "video", {
+    videoMode: "video_reference",
+    model: { family: "omni_flash", id: "abra_edit" },
+  });
+  const sourceVideo = node("source-vid", "video", {}, ["vid-1"]);
+  const sourceImage = node("source-img", "image", {}, ["img-1"]);
+
+  const hydrated = hydrateForm({
+    rfId: "target",
+    nodes: [targetVideo, sourceVideo, sourceImage],
+    edges: [
+      { id: "e1", source: "source-vid", target: "target" },
+      { id: "e2", source: "source-img", target: "target" },
+    ],
+    defaults,
+    seedPrompt: "test",
+    boardPublicId: "board-1",
+  });
+
+  assert.equal(hydrated.omniVideoMode, "video_reference");
+  assert.equal(hydrated.videoModel, "omni_flash");
 });
 
 

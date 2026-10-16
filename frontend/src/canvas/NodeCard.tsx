@@ -883,7 +883,7 @@ function VideoBody({ rfId, data }: { rfId: string; data: FlowboardNodeData }) {
   const { nodes, edges } = useBoardStore.getState();
   const videoInfo = getVideoUpstreamInfo(rfId, nodes, edges);
   let posterIds: (string | null)[] = [];
-  if (videoInfo.isImageUpstream && videoInfo.sourceNode) {
+  if (videoInfo.isImageUpstream && videoInfo.sourceNode && videoInfo.sourceNode.data.type !== "video") {
     posterIds =
       videoInfo.sourceNode.data.mediaIds ??
       (videoInfo.sourceNode.data.mediaId ? [videoInfo.sourceNode.data.mediaId] : []);
@@ -1439,10 +1439,13 @@ export function NodeCard(props: NodeProps<FlowNode>) {
         <span className="node-title">{data.title}</span>
         {videoInfo && (() => {
           let displayMode: string = videoInfo.mode;
-          if (videoInfo.mode === "r2v") {
-            displayMode = "r2v";
-          } else if (data.generation?.videoMode === "video_reference") {
+          const hasSingleUpstreamVideo = (videoInfo.upstreamVideoNodes?.length ?? (videoInfo.mode === "video_continuation" ? 1 : 0)) === 1;
+          const hasNoUpstream = videoInfo.upstreamNodes.length === 0;
+
+          if (data.generation?.videoMode === "video_reference" && (hasSingleUpstreamVideo || hasNoUpstream)) {
             displayMode = "video_reference";
+          } else if (videoInfo.mode === "r2v") {
+            displayMode = "r2v";
           } else if (videoInfo.mode === "t2v") {
             const independentMediaIds = data.generation?.independentVideoMediaIds as string[] | undefined;
             const independentVideoMode = data.generation?.independentVideoMode as string | undefined;

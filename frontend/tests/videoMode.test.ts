@@ -133,3 +133,103 @@ test("computeCanGenerate preserves character and busy gating", () => {
     false,
   );
 });
+
+test("resolveVideoMode supports video_reference when exactly 1 video and multiple images are connected", () => {
+  const mixedUpstream: VideoUpstreamInfo = {
+    mode: "r2v",
+    label: "Ingredients (r2v)",
+    sourceMediaId: "vid-1",
+    isVideoUpstream: true,
+    isImageUpstream: true,
+    upstreamNodes: [{} as any, {} as any],
+    upstreamVideoNodes: [{} as any],
+    upstreamImageNodes: [{} as any],
+  };
+
+  // Case 4 with Omni Flash and video_reference chosen
+  const refResult = resolve({
+    isOmniVideo: true,
+    omniVideoMode: "video_reference",
+    videoInfo: mixedUpstream,
+    totalConnectedSources: 2,
+  });
+  assert.equal(refResult.videoUiKey, "video_reference");
+  assert.equal(refResult.isEffectiveR2v, false);
+  assert.equal(refResult.actualConnectedMode, "video_reference");
+
+  // Case 4 with Omni Flash in default mode -> r2v
+  const r2vResult = resolve({
+    isOmniVideo: true,
+    omniVideoMode: "default",
+    videoInfo: mixedUpstream,
+    totalConnectedSources: 2,
+    connectedVideoMode: "r2v",
+  });
+  assert.equal(r2vResult.videoUiKey, "connected");
+  assert.equal(r2vResult.isEffectiveR2v, true);
+  assert.equal(r2vResult.actualConnectedMode, "r2v");
+
+  // Case 4 with Veo (not Omni) -> cannot be video_reference, must be r2v
+  const veoResult = resolve({
+    isOmniVideo: false,
+    omniVideoMode: "video_reference",
+    videoInfo: mixedUpstream,
+    totalConnectedSources: 2,
+    connectedVideoMode: "r2v",
+  });
+  assert.equal(veoResult.videoUiKey, "connected");
+  assert.equal(veoResult.isEffectiveR2v, true);
+
+  // Case 2 with 2 videos upstream -> cannot be video_reference, must be r2v
+  const multiVideoUpstream: VideoUpstreamInfo = {
+    mode: "r2v",
+    label: "Ingredients (r2v)",
+    isVideoUpstream: true,
+    isImageUpstream: false,
+    upstreamNodes: [{} as any, {} as any],
+    upstreamVideoNodes: [{} as any, {} as any],
+    upstreamImageNodes: [],
+  };
+  const multiVidResult = resolve({
+    isOmniVideo: true,
+    omniVideoMode: "video_reference",
+    videoInfo: multiVideoUpstream,
+    totalConnectedSources: 2,
+    connectedVideoMode: "r2v",
+  });
+  assert.equal(multiVidResult.videoUiKey, "connected");
+  assert.equal(multiVidResult.isEffectiveR2v, true);
+});
+
+test("canSubmitVideo supports video_reference when 1 upstream video exists", () => {
+  const mixedUpstream: VideoUpstreamInfo = {
+    mode: "r2v",
+    label: "Ingredients (r2v)",
+    sourceMediaId: "vid-1",
+    isVideoUpstream: true,
+    isImageUpstream: true,
+    upstreamNodes: [{} as any, {} as any],
+    upstreamVideoNodes: [{} as any],
+    upstreamImageNodes: [{} as any],
+  };
+
+  assert.equal(
+    canSubmitVideo({
+      isVideo: true,
+      isOmniVideo: true,
+      omniVideoMode: "video_reference",
+      videoReferenceMediaId: null,
+      videoInfo: mixedUpstream,
+      hasPendingUpstream: false,
+      extractingFrame: false,
+      independentVideoMediaIds: [],
+      prompt: "",
+      isExtend: false,
+      isEffectiveR2v: false,
+      refSourceNodes: [],
+      r2vAdditionalMediaIds: [],
+      selectedSourceCount: 0,
+    }),
+    true,
+  );
+});

@@ -127,14 +127,18 @@ export function hydrateForm(snapshot: FormSnapshot): GenerationFormState {
   const videoInfo = nodeType === "video"
     ? getVideoUpstreamInfo(rfId, nodes, edges)
     : null;
+  const upstreamVideoCount = videoInfo?.upstreamVideoNodes?.length ??
+    (videoInfo?.mode === "video_continuation" ? 1 : 0);
+  const hasIncoming = (videoInfo?.upstreamNodes?.length ?? 0) > 0;
+  const cannotBeVideoReference = upstreamVideoCount >= 2 || (hasIncoming && upstreamVideoCount === 0);
   const isMultiSource = videoInfo?.mode === "r2v" || (videoInfo?.upstreamNodes?.length ?? 0) >= 2;
-  const isSavedVideoReference = !isMultiSource && (
+  const isSavedVideoReference = !cannotBeVideoReference && (
     savedGeneration.videoMode === "video_reference"
     || savedForm.omniVideoMode === "video_reference"
   );
   const videoModel = isSavedVideoReference
     ? "omni_flash"
-    : (isMultiSource && (savedGeneration.videoMode === "video_reference" || savedForm.omniVideoMode === "video_reference")
+    : (cannotBeVideoReference && (savedGeneration.videoMode === "video_reference" || savedForm.omniVideoMode === "video_reference")
       ? defaults.videoModel
       : storedVideoModelFamily);
   const connectedVideoMode = isMultiSource
@@ -200,6 +204,7 @@ export interface SerializeFormContext {
   videoSourceNodeFamily: string | undefined;
   hasAnyIncomingEdge: boolean;
   currentGeneration: NodeGeneration;
+  canBeVideoReference?: boolean;
 }
 
 export function serializeForm(
@@ -215,8 +220,12 @@ export function serializeForm(
     videoSourceNodeFamily,
     hasAnyIncomingEdge,
     currentGeneration,
+    canBeVideoReference,
   } = context;
-  const isVideoRefActive = isVideo && videoMode !== "r2v" && form.videoModel === "omni_flash" &&
+  const isVideoRefAllowed = typeof canBeVideoReference === "boolean"
+    ? canBeVideoReference
+    : videoMode !== "r2v";
+  const isVideoRefActive = isVideo && isVideoRefAllowed && form.videoModel === "omni_flash" &&
     form.omniVideoMode === "video_reference";
   const videoModel = form.videoModel === "omni_flash"
     ? {

@@ -300,18 +300,23 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
     isExtend,
     videoUiKey,
   } = resolvedVideoMode;
+
+  const hasUpstreamVideo = (videoInfo?.upstreamVideoNodes?.length ?? (videoInfo?.mode === "video_continuation" ? 1 : 0)) === 1;
+  const hasNoUpstream = (videoInfo?.upstreamNodes?.length ?? 0) === 0;
+  const canBeVideoReference = isOmniVideo && (hasNoUpstream || hasUpstreamVideo);
+
   const connectedVideoAction: ConnectedVideoAction | null =
-    isEffectiveR2v || videoInfo?.mode === "r2v"
-      ? "r2v"
-      : videoInfo?.mode === "video_continuation"
-        ? omniVideoMode === "video_reference"
-          ? "video_reference"
-          : isExtend
+    canBeVideoReference && omniVideoMode === "video_reference"
+      ? "video_reference"
+      : isEffectiveR2v || videoInfo?.mode === "r2v"
+        ? "r2v"
+        : videoInfo?.mode === "video_continuation"
+          ? isExtend
             ? "extend"
             : "continuation"
-        : isVideo && isOmniVideo && omniVideoMode === "video_reference"
-          ? "video_reference"
-          : null;
+          : isVideo && isOmniVideo && omniVideoMode === "video_reference"
+            ? "video_reference"
+            : null;
   useEffect(() => {
     if (connectedVideoAction === "video_reference") {
       if (videoModelFamily !== "omni_flash") setVideoModel("omni_flash");
@@ -415,7 +420,7 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
   // Video i2v has its own single-source-with-variant-batch picker below.
   // (Model-agnostic: derived from the connected graph, not from which
   // video model family is selected.)
-  const promptSourceNodes = (!isVideo || isEffectiveR2v) && rfId
+  const promptSourceNodes = (!isVideo || isEffectiveR2v || connectedVideoAction === "video_reference") && rfId
     ? edges
         .filter((e) => e.target === rfId)
         .map((e) => {
@@ -432,7 +437,7 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
   // made the dialog show NO notice at all, so the user never knew a source
   // was still pending. We split into `refSourceNodes` (renderable thumbs)
   // and `pendingRefNodes` (rendered as the unified ⚠ pending notice).
-  const refSourceEntries: RefSourceEntry[] = (!isVideo || isEffectiveR2v) && rfId
+  const refSourceEntries: RefSourceEntry[] = (!isVideo || isEffectiveR2v || connectedVideoAction === "video_reference") && rfId
     ? edges
         .filter((e) => e.target === rfId)
         .map((e) => {
@@ -491,6 +496,7 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
       videoSourceNodeFamily: videoInfo?.sourceNodeFamily,
       hasAnyIncomingEdge,
       currentGeneration,
+      canBeVideoReference,
     });
     useBoardStore.getState().updateNodeGeneration(rfId, generation);
   }, [
@@ -503,6 +509,7 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
     videoInfo?.mode,
     videoInfo?.sourceNodeFamily,
     hasAnyIncomingEdge,
+    canBeVideoReference,
   ]);
 
   useDialogA11y({
@@ -779,6 +786,7 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
         <SourceReferences
           isVideo={isVideo}
           isEffectiveR2v={isEffectiveR2v}
+          connectedVideoAction={connectedVideoAction}
           refSourceNodes={refSourceNodes}
           promptSourceNodes={promptSourceNodes}
           pendingRefNodes={pendingRefNodes}

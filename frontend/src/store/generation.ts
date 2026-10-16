@@ -1082,9 +1082,15 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           const upstreamSources = opts.sourceMediaIds
             ? []
             : collectUpstreamVideoGenerationSources(rfId);
+          const savedAdditional = Array.isArray((generation as any)?.r2vAdditionalMediaIds)
+            ? ((generation as any).r2vAdditionalMediaIds as string[])
+            : [];
           const ingredients = opts.sourceMediaIds?.length
             ? opts.sourceMediaIds
-            : upstreamSources.filter((source) => !source.isVideo).map((source) => source.mediaId);
+            : Array.from(new Set([
+                ...upstreamSources.filter((source) => !source.isVideo).map((source) => source.mediaId),
+                ...savedAdditional,
+              ]));
 
           reqDto = await createRequest({
             type: "gen_video_video_reference",

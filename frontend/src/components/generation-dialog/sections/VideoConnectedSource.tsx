@@ -27,34 +27,46 @@ interface VideoConnectedSourceProps {
 
 export function VideoConnectedSource(props: VideoConnectedSourceProps) {
   const { isVideo, videoInfo } = props;
+  const upstreamVideoCount = videoInfo?.upstreamVideoNodes?.length ??
+    (videoInfo?.mode === "video_continuation" ? 1 : 0);
+  const upstreamImageCount = videoInfo?.upstreamImageNodes?.length ??
+    (videoInfo?.mode === "i2v" ? 1 : (videoInfo?.isImageUpstream ? 1 : 0));
+  const hasSingleUpstreamVideo = upstreamVideoCount === 1;
+  const hasUpstreamImages = upstreamImageCount > 0;
+
   return (
     <>
       {/* Video connected source section */}
       {isVideo && videoInfo?.mode !== "t2v" && (
         <div className="gen-dialog__field">
-          <VideoContinuationPanel
-            videoInfo={videoInfo}
-            action={props.action ?? "continuation"}
-            onActionChange={props.onActionChange}
-            isExtend={props.isExtend}
-            isOmniVideo={props.isOmniVideo}
-            omniVideoMode={props.omniVideoMode}
-            isUpstreamVeoVideo={props.isUpstreamVeoVideo}
-            connectedVideoMode={props.connectedVideoMode}
-            isWorking={props.isWorking}
-          />
-          <ConnectedImageSources
-            videoInfo={videoInfo}
-            totalConnectedSources={props.totalConnectedSources}
-            connectedVideoMode={props.connectedVideoMode}
-            setConnectedVideoMode={props.setConnectedVideoMode}
-            actualConnectedMode={props.actualConnectedMode}
-            sourceMediaIds={props.sourceMediaIds}
-            sourceNode={props.sourceNode}
-            selectedSourceIdx={props.selectedSourceIdx}
-            setSelectedSourceIdx={props.setSelectedSourceIdx}
-            isWorking={props.isWorking}
-          />
+          {hasSingleUpstreamVideo && (
+            <VideoContinuationPanel
+              videoInfo={videoInfo}
+              action={props.action ?? "continuation"}
+              onActionChange={props.onActionChange}
+              isExtend={props.isExtend}
+              isOmniVideo={props.isOmniVideo}
+              omniVideoMode={props.omniVideoMode}
+              isUpstreamVeoVideo={props.isUpstreamVeoVideo}
+              connectedVideoMode={props.connectedVideoMode}
+              isWorking={props.isWorking}
+              hasUpstreamImages={hasUpstreamImages}
+            />
+          )}
+          {!hasSingleUpstreamVideo && (
+            <ConnectedImageSources
+              videoInfo={videoInfo}
+              totalConnectedSources={props.totalConnectedSources}
+              connectedVideoMode={props.connectedVideoMode}
+              setConnectedVideoMode={props.setConnectedVideoMode}
+              actualConnectedMode={props.actualConnectedMode}
+              sourceMediaIds={props.sourceMediaIds}
+              sourceNode={props.sourceNode}
+              selectedSourceIdx={props.selectedSourceIdx}
+              setSelectedSourceIdx={props.setSelectedSourceIdx}
+              isWorking={props.isWorking}
+            />
+          )}
         </div>
       )}
     </>

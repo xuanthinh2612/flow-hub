@@ -129,3 +129,19 @@ test("i2v uses sourceMediaId for one source and sourceMediaIds with multiplied v
   assert.deepEqual(multi.dispatch.sourceMediaIds, ["image-1", "image-2"]);
   assert.equal(multi.dispatch.variantCount, 4);
 });
+
+test("video_reference on connected node dispatches upstream video as sourceMediaId and upstream images plus additional images as sourceMediaIds", () => {
+  const imageRef = { edgeId: "e1", mediaId: "image-1", variantIdx: null, allVariants: [], node: { data: { type: "image" } } } as RefSourceEntry;
+  const result = buildVideoSubmit(base({
+    isOmniVideo: true,
+    omniVideoMode: "video_reference",
+    videoInfo: info("r2v", "video-upstream-1"),
+    refSourceNodes: [imageRef],
+    r2vAdditionalMediaIds: ["extra-image-2"],
+  }));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.dispatch.videoMode, "video_reference");
+  assert.equal(result.dispatch.sourceMediaId, "video-upstream-1");
+  assert.deepEqual(result.dispatch.sourceMediaIds, ["image-1", "extra-image-2"]);
+});

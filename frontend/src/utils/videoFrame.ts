@@ -12,9 +12,54 @@ export interface VideoUpstreamInfo {
   isVideoUpstream: boolean;
   isImageUpstream: boolean;
   upstreamNodes: FlowNode[];
-  /** Family of the single upstream video node (if mode is video_continuation).
+  upstreamVideoNodes?: FlowNode[];
+  upstreamImageNodes?: FlowNode[];
+  /** Family of the single upstream video node (if mode is video_continuation or 1 upstream video).
    *  Derived from node.data.generation?.model?.family. */
   sourceNodeFamily?: string | undefined;
+}
+
+function extractSingleNodeInfo(sourceNode: FlowNode, incomingEdges: Edge[]) {
+  const isVideo = sourceNode.data.type === 'video';
+  const edge = incomingEdges.find((e) => e.source === sourceNode.id);
+  const pin = (edge?.data?.sourceVariantIdx ?? null) as number | null;
+  const variants = (Array.isArray(sourceNode.data.mediaIds) ? sourceNode.data.mediaIds : []).filter(
+    (m): m is string => typeof m === 'string' && m.length > 0
+  );
+  let sourceMediaId: string | undefined;
+  if (pin !== null && pin >= 0 && pin < variants.length) {
+    sourceMediaId = variants[pin];
+  } else if (typeof sourceNode.data.mediaId === 'string' && sourceNode.data.mediaId) {
+    sourceMediaId = sourceNode.data.mediaId;
+  } else if (variants.length > 0) {
+    sourceMediaId = variants[0];
+  }
+  const denseMids = variants.length > 0 ? variants : (sourceMediaId ? [sourceMediaId] : []);
+  const gen = sourceNode.data.generation as any;
+  const rawFamily = gen?.model?.family ?? gen?.videoModel;
+  const modelId = typeof gen?.model?.id === 'string' ? gen.model.id : '';
+  const isVeoModel = rawFamily === 'veo'
+    || modelId.startsWith('veo_')
+    || gen?.videoMode === 'extend_video';
+  const isOmniModel = rawFamily === 'omni_flash'
+    || modelId.startsWith('abra_')
+    || gen?.videoMode === 'video_reference';
+  const generatedVideoModel = (sourceNode.data as any)?.videoQuality ?? gen?.model?.quality;
+  const hasGenerationMarker = (typeof generatedVideoModel === 'string'
+      && generatedVideoModel.length > 0
+      && !generatedVideoModel.startsWith('abra_'))
+    || (typeof sourceNode.data.lastRequestId === 'string' && sourceNode.data.lastRequestId.length > 0)
+    || sourceNode.data.status === 'queued'
+    || sourceNode.data.status === 'running';
+  const sourceNodeFamily: string | undefined = isVideo
+    ? isOmniModel
+      ? 'omni_flash'
+      : hasGenerationMarker && isVeoModel
+        ? 'veo'
+        : undefined
+    : undefined;
+
+  return { sourceMediaId, denseMids, sourceNodeFamily };
 }
 
 export function getVideoUpstreamInfo(
@@ -27,62 +72,42 @@ export function getVideoUpstreamInfo(
     .map((e) => nodes.find((n) => n.id === e.source))
     .filter((n): n is FlowNode => Boolean(n) && ['image', 'character', 'visual_asset', 'Storyboard', 'video'].includes(n!.data.type));
 
+  const upstreamVideoNodes = upstreamNodes.filter((n) => n.data.type === 'video');
+  const upstreamImageNodes = upstreamNodes.filter((n) => n.data.type !== 'video');
+
   if (upstreamNodes.length >= 2) {
+    let sourceNode: FlowNode | undefined;
+    let sourceMediaId: string | undefined;
+    let sourceMediaIds: string[] | undefined;
+    let sourceNodeFamily: string | undefined;
+
+    if (upstreamVideoNodes.length === 1) {
+      sourceNode = upstreamVideoNodes[0];
+      const extracted = extractSingleNodeInfo(sourceNode, incomingEdges);
+      sourceMediaId = extracted.sourceMediaId;
+      sourceMediaIds = extracted.denseMids;
+      sourceNodeFamily = extracted.sourceNodeFamily;
+    }
+
     return {
       mode: 'r2v',
       label: 'Ingredients (r2v)',
+      sourceNode,
+      sourceMediaId,
+      sourceMediaIds,
+      sourceNodeFamily,
       upstreamNodes,
-      isVideoUpstream: upstreamNodes.some((n) => n.data.type === 'video'),
-      isImageUpstream: upstreamNodes.some((n) => n.data.type !== 'video'),
+      upstreamVideoNodes,
+      upstreamImageNodes,
+      isVideoUpstream: upstreamVideoNodes.length > 0,
+      isImageUpstream: upstreamImageNodes.length > 0,
     };
   }
 
   if (upstreamNodes.length === 1) {
     const sourceNode = upstreamNodes[0];
     const isVideo = sourceNode.data.type === 'video';
-    const edge = incomingEdges.find((e) => e.source === sourceNode.id);
-    const pin = (edge?.data?.sourceVariantIdx ?? null) as number | null;
-    const variants = (Array.isArray(sourceNode.data.mediaIds) ? sourceNode.data.mediaIds : []).filter(
-      (m): m is string => typeof m === 'string' && m.length > 0
-    );
-    let sourceMediaId: string | undefined;
-    if (pin !== null && pin >= 0 && pin < variants.length) {
-      sourceMediaId = variants[pin];
-    } else if (typeof sourceNode.data.mediaId === 'string' && sourceNode.data.mediaId) {
-      sourceMediaId = sourceNode.data.mediaId;
-    } else if (variants.length > 0) {
-      sourceMediaId = variants[0];
-    }
-    const denseMids = variants.length > 0 ? variants : (sourceMediaId ? [sourceMediaId] : []);
-    // Detect the family of the upstream video so the dialog can offer
-    // extend_video (Veo-only) vs video_continuation (model-agnostic).
-    const gen = sourceNode.data.generation as any;
-    const rawFamily = gen?.model?.family ?? gen?.videoModel;
-    const modelId = typeof gen?.model?.id === 'string' ? gen.model.id : '';
-    // A default Veo preference is stored on every newly created video node,
-    // including nodes that later receive an uploaded clip. Generated nodes
-    // carry a request id; older Veo nodes may lack the completion quality
-    // stamp, so accept either generation marker while excluding uploads.
-    const isVeoModel = rawFamily === 'veo'
-      || modelId.startsWith('veo_')
-      || gen?.videoMode === 'extend_video';
-    const isOmniModel = rawFamily === 'omni_flash'
-      || modelId.startsWith('abra_')
-      || gen?.videoMode === 'video_reference';
-    const generatedVideoModel = (sourceNode.data as any)?.videoQuality ?? gen?.model?.quality;
-    const hasGenerationMarker = (typeof generatedVideoModel === 'string'
-        && generatedVideoModel.length > 0
-        && !generatedVideoModel.startsWith('abra_'))
-      || (typeof sourceNode.data.lastRequestId === 'string' && sourceNode.data.lastRequestId.length > 0)
-      || sourceNode.data.status === 'queued'
-      || sourceNode.data.status === 'running';
-    const sourceNodeFamily: string | undefined = isVideo
-      ? isOmniModel
-        ? 'omni_flash'
-        : hasGenerationMarker && isVeoModel
-          ? 'veo'
-          : undefined
-      : undefined;
+    const { sourceMediaId, denseMids, sourceNodeFamily } = extractSingleNodeInfo(sourceNode, incomingEdges);
 
     return {
       mode: isVideo ? 'video_continuation' : 'i2v',
@@ -93,6 +118,8 @@ export function getVideoUpstreamInfo(
       isVideoUpstream: isVideo,
       isImageUpstream: !isVideo,
       upstreamNodes,
+      upstreamVideoNodes,
+      upstreamImageNodes,
       sourceNodeFamily,
     };
   }
@@ -103,6 +130,8 @@ export function getVideoUpstreamInfo(
     isVideoUpstream: false,
     isImageUpstream: false,
     upstreamNodes: [],
+    upstreamVideoNodes: [],
+    upstreamImageNodes: [],
   };
 }
 

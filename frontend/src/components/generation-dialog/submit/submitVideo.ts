@@ -59,24 +59,31 @@ export function buildVideoSubmit(ctx: BuildVideoSubmitContext): VideoSubmitResul
   } = ctx;
 
   // 0. Video Reference (Omni Flash abra_edit - jIps6)
-  if (!isEffectiveR2v && videoInfo?.mode !== "r2v" && isOmniVideo && omniVideoMode === "video_reference") {
-    const refMid = videoReferenceMediaId || (videoInfo?.mode === "video_continuation" ? videoInfo.sourceMediaId : null);
-    if (!refMid) return { ok: false, nodeError: "Vui lòng chọn hoặc tải lên video tham chiếu." };
+  if (!isEffectiveR2v && isOmniVideo && omniVideoMode === "video_reference") {
+    const refMid = videoReferenceMediaId || videoInfo?.sourceMediaId || null;
+    if (!refMid && !hasPendingUpstream) return { ok: false, nodeError: "Vui lòng chọn hoặc tải lên video tham chiếu." };
+
+    const upstreamImageIds = refSourceNodes
+      .filter((r) => r.node.data.type !== "video" && Boolean(r.mediaId))
+      .map((r) => r.mediaId as string);
+    const combinedMediaIds = Array.from(new Set([...upstreamImageIds, ...r2vAdditionalMediaIds]));
+
     return {
       ok: true,
       patchGeneration: {
         videoMode: "video_reference",
-        videoReference: { sourceMediaId: refMid },
+        videoReference: { sourceMediaId: refMid ?? undefined },
         r2vAdditionalMediaIds,
       },
+      patchNodeData: { extractingFrame: false, extractError: null },
       dispatch: {
         prompt,
         aspectRatio,
         kind: "video",
         cameraMode: camera,
         videoMode: "video_reference",
-        sourceMediaId: refMid,
-        sourceMediaIds: r2vAdditionalMediaIds.length > 0 ? r2vAdditionalMediaIds : undefined,
+        sourceMediaId: refMid ?? undefined,
+        sourceMediaIds: combinedMediaIds.length > 0 ? combinedMediaIds : undefined,
         variantCount: variants,
       },
     };

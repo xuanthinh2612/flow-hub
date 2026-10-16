@@ -1,7 +1,7 @@
 import type { FlowNode } from "../../../store/board";
 import { MediaPicker } from "../../MediaPicker";
 import { SourcePendingNotice } from "./SourcePendingNotice";
-import type { RefSourceEntry } from "../types";
+import type { ConnectedVideoAction, RefSourceEntry } from "../types";
 import { mediaUrl } from "../../../canvas/canvasApi";
 
 type PromptSourceEntry = { edgeId: string; node: FlowNode; text: string };
@@ -9,6 +9,7 @@ type PromptSourceEntry = { edgeId: string; node: FlowNode; text: string };
 interface SourceReferencesProps {
   isVideo: boolean;
   isEffectiveR2v: boolean;
+  connectedVideoAction?: ConnectedVideoAction | null;
   refSourceNodes: Array<RefSourceEntry & { mediaId: string }>;
   promptSourceNodes: PromptSourceEntry[];
   pendingRefNodes: FlowNode[];
@@ -24,6 +25,7 @@ interface SourceReferencesProps {
 export function SourceReferences({
   isVideo,
   isEffectiveR2v,
+  connectedVideoAction,
   refSourceNodes,
   promptSourceNodes,
   pendingRefNodes,
@@ -35,24 +37,33 @@ export function SourceReferences({
   setR2vAdditionalMediaIds,
   pickVariantForEdge,
 }: SourceReferencesProps) {
+  const isVideoRef = connectedVideoAction === "video_reference";
+  const shouldRender =
+    (!isVideo || isEffectiveR2v || isVideoRef) &&
+    (refSourceNodes.length > 0 ||
+      promptSourceNodes.length > 0 ||
+      pendingRefNodes.length > 0 ||
+      isVideoRef);
+
+  if (!shouldRender) return null;
+
+  const displayRefNodes = isVideoRef
+    ? refSourceNodes.filter((r) => r.node.data.type !== "video")
+    : refSourceNodes;
+  const displayPendingNodes = isVideoRef
+    ? pendingRefNodes.filter((n) => n.data.type !== "video")
+    : pendingRefNodes;
+
   return (
     <>
-      {/* Source references ? image refs (character/image/visual_asset/
-          Storyboard) AND prompt-text refs. Prompt nodes don't have
-          media but their text feeds the auto-prompt synth, so we
-          surface them as text chips next to the thumbnails.
-          Upstream nodes that haven't produced media yet still appear
-          here ?as the unified pending notice?so a never/partially
-          generated source is never silently invisible. */}
-        {(!isVideo || isEffectiveR2v)
-          && (refSourceNodes.length > 0 || promptSourceNodes.length > 0 || pendingRefNodes.length > 0)
-          && (
-          <div className="gen-dialog__field">
-            <span className="gen-dialog__label">
-              Source references ({refSourceNodes.length + promptSourceNodes.length + pendingRefNodes.length})
-            </span>
-            <div className="ref-source-row">
-              {promptSourceNodes.map((p) => {
+      <div className="gen-dialog__field">
+        <span className="gen-dialog__label">
+          {isVideoRef
+            ? `Ảnh tham chiếu kèm theo (${displayRefNodes.length + r2vAdditionalMediaIds.length})`
+            : `Source references (${refSourceNodes.length + promptSourceNodes.length + pendingRefNodes.length})`}
+        </span>
+        <div className="ref-source-row">
+          {promptSourceNodes.map((p) => {
                 const preview = p.text.trim() || "(empty prompt)";
                 return (
                   <div
@@ -72,7 +83,7 @@ export function SourceReferences({
                   </div>
                 );
               })}
-              {refSourceNodes.map((r) => {
+              {displayRefNodes.map((r) => {
                 const isMulti = r.allVariants.length >= 2;
                 const isPickerOpen = openVariantPicker === r.edgeId;
                 const tooltip = isMulti
@@ -162,7 +173,7 @@ export function SourceReferences({
                   </div>
                 );
               })}
-              {isEffectiveR2v && (
+              {(isEffectiveR2v || isVideoRef) && (
                 <MediaPicker
                   kind="image"
                   workspaceId={boardPublicId}
@@ -179,9 +190,8 @@ export function SourceReferences({
             </div>
             {/* Upstream refs still generating / never generated — same
                 unified notice the video sources use. */}
-            <SourcePendingNotice nodes={pendingRefNodes} />
+            <SourcePendingNotice nodes={displayPendingNodes} />
           </div>
-        )}
     </>
   );
 }
