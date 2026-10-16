@@ -2,17 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { useGenerationStore } from "../../store/generation";
 import { useBoardStore, type StoryboardGrid } from "../../store/board";
 import {
-  STORYBOARD_GRIDS,
   buildStoryboardPrompt,
   buildStoryboardVideoPrompt,
   normaliseStoryboardGrid,
-  totalPanels,
 } from "../../lib/storyboardPrompt";
 import {
   useSettingsStore,
-  OMNI_FLASH_CREDIT_COST,
-  OMNI_FLASH_DURATIONS,
-  OMNI_FLASH_RESOLUTIONS,
   type ImageModelKey,
   type MediaProviderKey,
   type OmniFlashDuration,
@@ -23,7 +18,6 @@ import {
 import {
   autoPrompt as autoPromptApi,
   autoPromptBatch as autoPromptBatchApi,
-  mediaUrl,
   patchEdge,
   patchNode,
   uploadImage,
@@ -33,22 +27,28 @@ import {
   type VideoUpstreamInfo,
 } from "../../utils/videoFrame";
 import {
-  CHARACTER_GENDERS,
-  CHARACTER_COUNTRIES,
-  CHARACTER_VIBES,
   type GenderKey,
   type CountryKey,
   type VibeKey,
 } from "../../constants/character";
-import { MediaPicker } from "../MediaPicker";
 import type { MediaItem } from "../../api/types";
-import { REF_SOURCE_TYPES, IMAGE_ASPECT_RATIOS, VIDEO_ASPECT_RATIOS, CAMERA_MOVEMENTS, VIDEO_MODEL_CHIPS, ENABLE_MUSE_BACKEND, MINI_SELECT_STYLE, type CameraKey, type AspectKey } from "./constants";
+import { REF_SOURCE_TYPES, IMAGE_ASPECT_RATIOS, VIDEO_ASPECT_RATIOS, type CameraKey, type AspectKey } from "./constants";
 import { type RefSourceEntry, type GenerationFormState } from "./types";
 import { buildCharacterPrompt } from "./lib/characterPrompt";
 import { cameraInstruction } from "./lib/cameraInstruction";
 import { pickDefaultAspect } from "./lib/aspect";
-import { InfoTip } from "./sections/InfoTip";
-import { SourcePendingNotice } from "./sections/SourcePendingNotice";
+import { CharacterBuilder } from "./sections/CharacterBuilder";
+import { OmniOptions } from "./sections/OmniOptions";
+import { CameraField } from "./sections/CameraField";
+import { VariantsStepper } from "./sections/VariantsStepper";
+import { StoryboardGridField } from "./sections/StoryboardGridField";
+import { BackendField } from "./sections/BackendField";
+import { AspectRatioField } from "./sections/AspectRatioField";
+import { VideoModelField } from "./sections/VideoModelField";
+import { SourceReferences } from "./sections/SourceReferences";
+import { VideoIndependentSource } from "./sections/VideoIndependentSource";
+import { VideoConnectedSource } from "./sections/VideoConnectedSource";
+import { PromptField } from "./sections/PromptField";
 import { useDialogA11y } from "./hooks/useDialogA11y";
 import { useCloseOnOutsidePicker } from "./hooks/useCloseOnOutsidePicker";
 export function GenerationDialog() {
@@ -1044,934 +1044,128 @@ export function GenerationDialog() {
           </button>
         </div>
 
-        {/* Prompt */}
-        <div className="gen-dialog__field">
-            <div className="gen-dialog__label-row">
-              <label className="gen-dialog__label" htmlFor="gen-prompt">
-                {isVideo ? "Motion prompt" : "Prompt"}
-                {autoPromptUsed && (
-                  <span className="gen-dialog__auto-badge" title="Auto-generated from upstream nodes">
-                    ✨ auto
-                  </span>
-                )}
-              </label>
-              <span className="gen-dialog__char-count">{prompt.length}/500</span>
-            </div>
-            <textarea
-              id="gen-prompt"
-              ref={firstFocusRef}
-              className="gen-dialog__textarea"
-              rows={5}
-              value={prompt}
-              onChange={(e) => {
-                setPrompt(e.target.value);
-                if (autoPromptUsed) setAutoPromptUsed(false);
-              }}
-              placeholder={
-                isVideo
-                  ? (isOmniVideo && omniVideoMode === "video_reference")
-                    ? "Mô tả chỉnh sửa video theo video tham chiếu (vd: đổi nhân vật trong video, đổi trang phục, bối cảnh)…"
-                    : videoInfo?.mode === "t2v"
-                    ? independentVideoEffectiveMode === "t2v"
-                      ? "Nhập mô tả video cần tạo (Text to Video)…"
-                      : independentVideoEffectiveMode === "i2v"
-                        ? "Bỏ trống để tự sinh motion prompt từ source image ✨ hoặc nhập prompt…"
-                        : "Bỏ trống để tự sinh motion prompt từ các source images ✨ hoặc nhập prompt…"
-                    : videoInfo?.mode === "video_continuation"
-                    ? isExtend
-                      ? "Nhập mô tả diễn biến tiếp theo để kéo dài video (Veo Extension)…"
-                      : "Nhập mô tả diễn biến tiếp theo sau frame cuối của video trước…"
-                    : "Bỏ trống để tự sinh motion prompt từ source image ✨ hoặc nhập prompt…"
-                  : isPrompt
-                  ? "Nhập prompt mồi để feed cho downstream image / video…"
-                  : "Bỏ trống để tự generate prompt từ upstream nodes ✨"
-              }
-              disabled={isWorking || extractingFrame}
-              readOnly={hasStoryboardUpstream}
-              title={
-                hasStoryboardUpstream
-                  ? "Locked: storyboard motion template (animates panels in order)"
-                  : undefined
-              }
-            />
-            {extractingFrame && (
-              <p className="gen-dialog__hint" style={{ color: "var(--accent)" }}>
-                ⏳ Đang trích xuất frame cuối từ video trước và tải lên Flow…
-              </p>
-            )}
-            {extractError && (
-              <p className="gen-dialog__hint" style={{ color: "#ef4444" }}>
-                ⚠ {extractError}
-              </p>
-            )}
-            {hasStoryboardUpstream && (
-              <p className="gen-dialog__hint gen-dialog__hint--locked">
-                🎬 <strong>Storyboard motion template</strong> — locked because an
-                upstream Storyboard node is feeding this video. Flow animates
-                the composite panels in order (frame 1 →
-                {" "}{totalPanels(storyboardUpstreamGrid)}). Other refs
-                (character / location / visual_asset) still flow through normally.
-              </p>
-            )}
-            {isWorking && (
-              <p className="gen-dialog__hint">
-                {node?.data.aiBriefStatus === "pending"
-                  ? "✨ Đang phân tích image…"
-                  : "✨ Đang dựng prompt từ upstream context…"}
-              </p>
-            )}
-        </div>
+        <PromptField
+          isVideo={isVideo}
+          isPrompt={isPrompt}
+          isWorking={isWorking}
+          extractingFrame={extractingFrame}
+          extractError={extractError}
+          hasStoryboardUpstream={hasStoryboardUpstream}
+          storyboardUpstreamGrid={storyboardUpstreamGrid}
+          prompt={prompt}
+          setPrompt={setPrompt}
+          autoPromptUsed={autoPromptUsed}
+          setAutoPromptUsed={setAutoPromptUsed}
+          firstFocusRef={firstFocusRef}
+          isOmniVideo={isOmniVideo}
+          omniVideoMode={omniVideoMode}
+          videoInfo={videoInfo}
+          independentVideoEffectiveMode={independentVideoEffectiveMode}
+          isExtend={isExtend}
+          aiBriefStatus={node?.data.aiBriefStatus}
+        />
 
-        {/* Character builder (character node only) */}
-        {isCharacter && (
-          <>
-            <div className="gen-dialog__field">
-              <span className="gen-dialog__label">Gender</span>
-              <div className="aspect-chip-row">
-                {CHARACTER_GENDERS.map((g) => (
-                  <button
-                    key={g.key}
-                    type="button"
-                    disabled={isWorking}
-                    className={`aspect-chip${charGender === g.key ? " aspect-chip--active" : ""}`}
-                    onClick={() => setCharGender(charGender === g.key ? null : g.key)}
-                  >
-                    {g.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="gen-dialog__field">
-              <span className="gen-dialog__label">Quốc gia</span>
-              <div className="aspect-chip-row">
-                {CHARACTER_COUNTRIES.map((c) => (
-                  <button
-                    key={c.key}
-                    type="button"
-                    disabled={isWorking}
-                    className={`aspect-chip${charCountry === c.key ? " aspect-chip--active" : ""}`}
-                    onClick={() => setCharCountry(charCountry === c.key ? null : c.key)}
-                  >
-                    {c.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="gen-dialog__field">
-              <span className="gen-dialog__label">Vibe</span>
-              <div className="aspect-chip-row">
-                {CHARACTER_VIBES.map((v) => (
-                  <button
-                    key={v.key}
-                    type="button"
-                    disabled={isWorking}
-                    className={`aspect-chip${charVibe === v.key ? " aspect-chip--active" : ""}`}
-                    onClick={() => setCharVibe(v.key)}
-                  >
-                    {v.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="gen-dialog__field">
-              <div className="gen-dialog__label-row">
-                <label className="gen-dialog__label" htmlFor="gen-char-extras">
-                  Mô tả thêm (tuỳ chọn)
-                  <InfoTip tip="Prompt được auto-build: portrait headshot · vibe styling · photorealistic — tối ưu cho character reference." />
-                </label>
-                <span className="gen-dialog__char-count">{charExtras.length}/200</span>
-              </div>
-              {/* FIX(bug 5): Leave the initial focus target on the main prompt only. */}
-              <textarea
-                id="gen-char-extras"
-                className="gen-dialog__textarea"
-                rows={3}
-                value={charExtras}
-                disabled={isWorking}
-                onChange={(e) => setCharExtras(e.target.value)}
-                placeholder="Tuổi, kiểu tóc, trang phục, biểu cảm…"
-              />
-            </div>
-          </>
-        )}
+        <CharacterBuilder
+          isCharacter={isCharacter}
+          charGender={charGender}
+          setCharGender={setCharGender}
+          charCountry={charCountry}
+          setCharCountry={setCharCountry}
+          charVibe={charVibe}
+          setCharVibe={setCharVibe}
+          charExtras={charExtras}
+          setCharExtras={setCharExtras}
+          isWorking={isWorking}
+        />
 
         {/* Source image / video source info (t2v, continuation, or i2v) */}
-        {isVideo && videoInfo?.mode === "t2v" && (
-          <div className="gen-dialog__field">
-            {isOmniVideo && omniVideoMode === "video_reference" ? (
-              <div className="source-info-box source-info-box--continuation">
-                <div className="source-info-box__header">
-                  <span className="source-info-box__icon">🎥</span>
-                  <div className="source-info-box__content" style={{ width: '100%' }}>
-                    <div className="gen-dialog__label-row" style={{ alignItems: 'center' }}>
-                      <span className="source-info-box__title">Chế độ: Tham chiếu video</span>
-                      <select
-                        className="source-select-mini"
-                        value={omniVideoMode}
-                        onChange={(e) => setOmniVideoMode(e.target.value as "default" | "video_reference")}
-                        disabled={isWorking}
-                        style={MINI_SELECT_STYLE}
-                      >
-                        <option value="default">Ảnh / Text (T2V/I2V/R2V)</option>
-                        <option value="video_reference">Tham chiếu video</option>
-                      </select>
-                    </div>
-                    <p className="source-info-box__desc">
-                      Chỉ tham chiếu duy nhất 1 video. Bạn có thể chọn video trong project hoặc tải tệp video lên.
-                    </p>
-                  </div>
-                </div>
+        <VideoIndependentSource
+          isVideo={isVideo}
+          videoInfo={videoInfo}
+          isOmniVideo={isOmniVideo}
+          omniVideoMode={omniVideoMode}
+          setOmniVideoMode={setOmniVideoMode}
+          uploadVideoError={uploadVideoError}
+          videoReferenceMediaId={videoReferenceMediaId}
+          setVideoReferenceMediaId={setVideoReferenceMediaId}
+          boardPublicId={boardPublicId}
+          isWorking={isWorking}
+          uploadingVideo={uploadingVideo}
+          videoFileInputRef={videoFileInputRef}
+          handleUploadVideoFile={handleUploadVideoFile}
+          r2vAdditionalMediaIds={r2vAdditionalMediaIds}
+          setR2vAdditionalMediaIds={setR2vAdditionalMediaIds}
+          independentVideoMediaIds={independentVideoMediaIds}
+          persistIndependentVideoMode={persistIndependentVideoMode}
+          independentVideoMode={independentVideoMode}
+          persistIndependentVideoSelection={persistIndependentVideoSelection}
+        />
 
-                {uploadVideoError && (
-                  <p className="node-error" style={{ margin: '8px 0 0' }}>{uploadVideoError}</p>
-                )}
+        <VideoConnectedSource
+          isVideo={isVideo}
+          videoInfo={videoInfo}
+          isExtend={isExtend}
+          isOmniVideo={isOmniVideo}
+          omniVideoMode={omniVideoMode}
+          setOmniVideoMode={setOmniVideoMode}
+          isUpstreamVeoVideo={isUpstreamVeoVideo}
+          videoExtendMode={videoExtendMode}
+          setVideoExtendMode={setVideoExtendMode}
+          isWorking={isWorking}
+          totalConnectedSources={totalConnectedSources}
+          connectedVideoMode={connectedVideoMode}
+          setConnectedVideoMode={setConnectedVideoMode}
+          actualConnectedMode={actualConnectedMode}
+          sourceMediaIds={sourceMediaIds}
+          sourceNode={sourceNode}
+          selectedSourceIdx={selectedSourceIdx}
+          setSelectedSourceIdx={setSelectedSourceIdx}
+        />
 
-                {videoReferenceMediaId ? (
-                  <div className="source-continuation-preview" style={{ marginTop: 10 }}>
-                    <video
-                      src={mediaUrl(videoReferenceMediaId)}
-                      className="source-continuation-video"
-                      controls
-                      muted
-                      preload="metadata"
-                      style={{ maxHeight: 180, width: '100%', borderRadius: 6 }}
-                    />
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
-                      <span className="source-continuation-tag" style={{ color: '#22d3ee' }}>
-                        ✓ Đang tham chiếu video này
-                      </span>
-                      <MediaPicker
-                        kind="video"
-                        workspaceId={boardPublicId}
-                        multi={false}
-                        value={videoReferenceMediaId}
-                        buttonText="Đổi video"
-                        disabled={isWorking || uploadingVideo}
-                        onChange={(val) => {
-                          const id = Array.isArray(val) ? val[0] : val;
-                          setVideoReferenceMediaId(id || null);
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        disabled={isWorking || uploadingVideo}
-                        onClick={() => videoFileInputRef.current?.click()}
-                      >
-                        {uploadingVideo ? "Đang tải…" : "⬆ Tải video khác"}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.4)' }}
-                        disabled={isWorking || uploadingVideo}
-                        onClick={() => setVideoReferenceMediaId(null)}
-                      >
-                        ✕ Xóa
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ marginTop: 12, display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <MediaPicker
-                      kind="video"
-                      workspaceId={boardPublicId}
-                      multi={false}
-                      value={null}
-                      buttonText="📁 Chọn video trong project"
-                      disabled={isWorking || uploadingVideo}
-                      onChange={(val) => {
-                        const id = Array.isArray(val) ? val[0] : val;
-                        setVideoReferenceMediaId(id || null);
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-primary"
-                      disabled={isWorking || uploadingVideo}
-                      onClick={() => videoFileInputRef.current?.click()}
-                    >
-                      {uploadingVideo ? "Đang tải…" : "⬆ Tải video lên"}
-                    </button>
-                  </div>
-                )}
+        <SourceReferences
+          isVideo={isVideo}
+          isEffectiveR2v={isEffectiveR2v}
+          refSourceNodes={refSourceNodes}
+          promptSourceNodes={promptSourceNodes}
+          pendingRefNodes={pendingRefNodes}
+          openVariantPicker={openVariantPicker}
+          setOpenVariantPicker={setOpenVariantPicker}
+          boardPublicId={boardPublicId}
+          isWorking={isWorking}
+          r2vAdditionalMediaIds={r2vAdditionalMediaIds}
+          setR2vAdditionalMediaIds={setR2vAdditionalMediaIds}
+          pickVariantForEdge={pickVariantForEdge}
+        />
 
-                <input
-                  ref={videoFileInputRef}
-                  type="file"
-                  accept="video/mp4,video/webm,video/quicktime"
-                  style={{ display: 'none' }}
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      await handleUploadVideoFile(file);
-                      e.target.value = '';
-                    }
-                  }}
-                />
+        <BackendField isPrompt={isPrompt} mediaProvider={mediaProvider} setMediaProvider={setMediaProvider} isWorking={isWorking} />
 
-                <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                  <div className="gen-dialog__label-row">
-                    <span className="gen-dialog__label">Ảnh tham chiếu kèm theo (tuỳ chọn - Ingredients):</span>
-                  </div>
-                  <div style={{ marginTop: 6 }}>
-                    <MediaPicker
-                      kind="image"
-                      workspaceId={boardPublicId}
-                      multi={true}
-                      value={r2vAdditionalMediaIds}
-                      disabled={isWorking}
-                      onChange={(ids) => {
-                        const newIds = Array.isArray(ids) ? ids : (ids ? [ids] : []);
-                        setR2vAdditionalMediaIds(newIds);
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="source-info-box source-info-box--t2v">
-                <span className="source-info-box__icon">✨</span>
-                <div className="source-info-box__content" style={{ width: '100%' }}>
-                  <div className="gen-dialog__label-row">
-                    <span className="source-info-box__title">Chế độ: Text/Image to Video</span>
-                    {isOmniVideo && (
-                      <select
-                        className="source-select-mini"
-                        value={omniVideoMode}
-                        onChange={(e) => setOmniVideoMode(e.target.value as "default" | "video_reference")}
-                        disabled={isWorking}
-                        style={MINI_SELECT_STYLE}
-                      >
-                        <option value="default">Ảnh / Text (T2V/I2V/R2V)</option>
-                        <option value="video_reference">Tham chiếu video</option>
-                      </select>
-                    )}
-                    {independentVideoMediaIds.length === 1 && !isOmniVideo && (
-                      <select
-                        className="source-select-mini"
-                        value={independentVideoMode}
-                        onChange={(e) => persistIndependentVideoMode(e.target.value as "i2v" | "r2v")}
-                        disabled={isWorking}
-                        style={MINI_SELECT_STYLE}
-                      >
-                        <option value="i2v">Nối tiếp (i2v)</option>
-                        <option value="r2v">Ingredients (r2v)</option>
-                      </select>
-                    )}
-                    {independentVideoMediaIds.length > 1 && !isOmniVideo && (
-                      <span className="source-select-mini" style={{ ...MINI_SELECT_STYLE, color: '#fb923c', display: 'inline-block' }}>
-                        Ingredients (r2v)
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ marginTop: 10 }}>
-                    <MediaPicker
-                      kind="image"
-                      workspaceId={boardPublicId}
-                      multi={true}
-                      value={independentVideoMediaIds}
-                      disabled={isWorking}
-                      onChange={(ids) => {
-                        const newIds = Array.isArray(ids) ? ids : (ids ? [ids] : []);
-                        persistIndependentVideoSelection(newIds);
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+        <AspectRatioField isPrompt={isPrompt} isVideo={isVideo} aspectRatio={aspectRatio} setAspectRatio={setAspectRatio} isWorking={isWorking} />
 
-        {isVideo && videoInfo?.mode !== "t2v" && (
-          <div className="gen-dialog__field">
+        <VideoModelField
+          isVideo={isVideo}
+          isExtend={isExtend}
+          videoModelFamily={videoModelFamily}
+          videoQuality={videoQuality}
+          setVideoModel={setVideoModel}
+          setVideoQuality={setVideoQuality}
+          isWorking={isWorking}
+          paygateTier={paygateTier}
+        />
 
-            {videoInfo?.mode === "video_continuation" && (
-              <div className="source-info-box source-info-box--continuation">
-                <div className="source-info-box__header">
-                  <span className="source-info-box__icon">🎬</span>
-                  <div className="source-info-box__content" style={{ width: '100%' }}>
-                    <div className="gen-dialog__label-row" style={{ alignItems: 'center' }}>
-                      <span className="source-info-box__title">
-                        {isExtend
-                          ? `Kéo dài Video #${videoInfo.sourceNode?.data.shortId}`
-                          : (isOmniVideo && omniVideoMode === "video_reference"
-                              ? `Tham chiếu Video #${videoInfo.sourceNode?.data.shortId}`
-                              : `Nối tiếp Video #${videoInfo.sourceNode?.data.shortId}`)}
-                      </span>
-                      {isUpstreamVeoVideo && (
-                        <select
-                          className="source-select-mini"
-                          value={videoExtendMode}
-                          onChange={(e) => setVideoExtendMode(e.target.value as "continuation" | "extend")}
-                          disabled={isWorking}
-                          style={MINI_SELECT_STYLE}
-                        >
-                          <option value="continuation">Nối tiếp (Frame cuối)</option>
-                          <option value="extend">Kéo dài (Extend video)</option>
-                        </select>
-                      )}
-                      {isOmniVideo && (
-                        <select
-                          className="source-select-mini"
-                          value={omniVideoMode}
-                          onChange={(e) => setOmniVideoMode(e.target.value as "default" | "video_reference")}
-                          disabled={isWorking}
-                          style={MINI_SELECT_STYLE}
-                        >
-                          <option value="default">Nối tiếp (Frame cuối)</option>
-                          <option value="video_reference">Tham chiếu video này</option>
-                        </select>
-                      )}
-                    </div>
-                    <p className="source-info-box__desc">
-                      {isExtend
-                        ? "Kéo dài video trực tiếp bằng Veo Extension Lite (fZytfe). Giữ liền mạch bối cảnh và chuyển động của video gốc."
-                        : (isOmniVideo && omniVideoMode === "video_reference"
-                            ? "Sử dụng video của node trước làm video tham chiếu trực tiếp cho Omni Flash (jIps6)."
-                            : "Frame cuối cùng của video trước sẽ được tự động trích xuất làm điểm bắt đầu (start frame) cho video này.")}
-                    </p>
-                  </div>
-                </div>
-                {videoInfo.sourceNode?.data.status !== "done" || !videoInfo.sourceMediaId ? (
-                  <SourcePendingNotice
-                    nodes={videoInfo.sourceNode ? [videoInfo.sourceNode] : []}
-                  />
-                ) : (
-                  <div className="source-continuation-preview">
-                    <video
-                      src={mediaUrl(videoInfo.sourceMediaId)}
-                      className="source-continuation-video"
-                      controls
-                      muted
-                      preload="metadata"
-                    />
-                    <span className="source-continuation-tag">
-                      {isExtend
-                        ? "✓ Sẵn sàng extend video (Veo 3.1 Extension Lite)"
-                        : (isOmniVideo && omniVideoMode === "video_reference"
-                            ? "✓ Sẵn sàng tham chiếu video (Omni Flash jIps6)"
-                            : "✓ Sẵn sàng trích xuất frame cuối khi bấm Generate")}
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
+        <OmniOptions
+          isOmniVideo={isOmniVideo}
+          omniFlashResolution={omniFlashResolution}
+          setOmniFlashResolution={setOmniFlashResolution}
+          omniFlashDuration={omniFlashDuration}
+          setOmniFlashDuration={setOmniFlashDuration}
+          isWorking={isWorking}
+        />
 
-            {(videoInfo?.mode === "i2v" || videoInfo?.mode === "r2v") && (
-              <>
-                <div className="gen-dialog__label-row">
-                  <span className="gen-dialog__label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    Chế độ:
-                    {videoInfo?.mode === "i2v" && totalConnectedSources <= 1 ? (
-                      <select
-                        className="source-select-mini"
-                        value={connectedVideoMode}
-                        onChange={(e) => setConnectedVideoMode(e.target.value as "i2v" | "r2v")}
-                        disabled={isWorking}
-                        style={MINI_SELECT_STYLE}
-                      >
-                        <option value="i2v">Nối tiếp (i2v)</option>
-                        <option value="r2v">Ingredients (r2v)</option>
-                      </select>
-                    ) : (
-                      <span className="source-select-mini" style={{ ...MINI_SELECT_STYLE, color: '#fb923c', display: 'inline-block' }}>
-                        Ingredients (r2v)
-                      </span>
-                    )}
-                  </span>
-                </div>
-                
-                {actualConnectedMode === "i2v" && (
-                  <>
-                    <div className="gen-dialog__label-row" style={{ marginTop: '10px' }}>
-                      <span className="gen-dialog__label">
-                        Source image{sourceMediaIds.length > 1 ? `s (${sourceMediaIds.length})` : ""}
-                      </span>
-                      {sourceMediaIds.length > 1 && (
-                        <div className="source-select-actions">
-                          <button
-                            type="button"
-                            className="source-select-mini"
-                            onClick={() =>
-                              setSelectedSourceIdx(
-                                new Set(sourceMediaIds.map((_, i) => i)),
-                              )
-                            }
-                          >
-                            All
-                          </button>
-                          <button
-                            type="button"
-                            className="source-select-mini"
-                            onClick={() => setSelectedSourceIdx(new Set())}
-                          >
-                            None
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                {sourceMediaIds.length > 0 && sourceNode ? (
-                  <>
-                    <div className="source-image-row">
-                      {sourceMediaIds.map((mid, i) => {
-                        const checked = selectedSourceIdx.has(i);
-                        return (
-                          <button
-                            key={mid}
-                            type="button"
-                            disabled={isWorking}
-                            className={`source-thumb${checked ? " source-thumb--checked" : ""}`}
-                            onClick={() => {
-                              setSelectedSourceIdx((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(i)) next.delete(i);
-                                else next.add(i);
-                                return next;
-                              });
-                            }}
-                            aria-pressed={checked}
-                            aria-label={`Variant ${i + 1}${checked ? " selected" : ""}`}
-                          >
-                            <img
-                              className="source-image-row__thumb"
-                              src={mediaUrl(mid)}
-                              alt={sourceNode.data.title}
-                            />
-                            <span className="source-thumb__check" aria-hidden="true">
-                              {checked ? "✓" : ""}
-                            </span>
-                          </button>
-                        );
-                      })}
-                      <span className="source-image-row__label">
-                        #{sourceNode.data.shortId}
-                      </span>
-                    </div>
-                    <p className="gen-dialog__hint">
-                      {selectedSourceIdx.size === 0 ? (
-                        <span style={{ color: "#ef4444" }}>
-                          Chọn ít nhất 1 variant để gen video.
-                        </span>
-                      ) : (
-                        <>
-                          Sẽ gen <strong>{selectedSourceIdx.size} video</strong>
-                          {selectedSourceIdx.size === sourceMediaIds.length
-                            ? " (tất cả variants)"
-                            : ` (${selectedSourceIdx.size}/${sourceMediaIds.length} variants)`}
-                          — cùng prompt + camera setting.
-                        </>
-                      )}
-                    </p>
-                  </>
-                ) : (
-                  <SourcePendingNotice
-                    nodes={sourceNode ? [sourceNode] : []}
-                  />
-                )}
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        )}
+        <CameraField isVideo={isVideo} camera={camera} setCamera={setCamera} isWorking={isWorking} />
 
-        {/* Source references — image refs (character/image/visual_asset/
-            Storyboard) AND prompt-text refs. Prompt nodes don't have
-            media but their text feeds the auto-prompt synth, so we
-            surface them as text chips next to the thumbnails.
-            Upstream nodes that haven't produced media yet still appear
-            here — as the unified ⚠ pending notice — so a never/partially
-            generated source is never silently invisible. */}
-        {(!isVideo || isEffectiveR2v)
-          && (refSourceNodes.length > 0 || promptSourceNodes.length > 0 || pendingRefNodes.length > 0)
-          && (
-          <div className="gen-dialog__field">
-            <span className="gen-dialog__label">
-              Source references ({refSourceNodes.length + promptSourceNodes.length + pendingRefNodes.length})
-            </span>
-            <div className="ref-source-row">
-              {promptSourceNodes.map((p) => {
-                const preview = p.text.trim() || "(empty prompt)";
-                return (
-                  <div
-                    key={p.edgeId}
-                    className="ref-source-chip ref-source-chip--prompt"
-                    title={`${p.node.data.title || "Prompt"} — ${preview}`}
-                  >
-                    <div className="ref-source-chip__prompt-body">
-                      <span className="ref-source-chip__prompt-icon" aria-hidden="true">✦</span>
-                      <span className="ref-source-chip__prompt-text">
-                        {preview}
-                      </span>
-                    </div>
-                    <span className="ref-source-chip__id">
-                      #{p.node.data.shortId}
-                    </span>
-                  </div>
-                );
-              })}
-              {refSourceNodes.map((r) => {
-                const isMulti = r.allVariants.length >= 2;
-                const isPickerOpen = openVariantPicker === r.edgeId;
-                const tooltip = isMulti
-                  ? `${r.node.data.title} — variant ${(r.variantIdx ?? 0) + 1} · click to switch`
-                  : r.node.data.title;
-                return (
-                  <div key={r.edgeId} className="ref-source-chip-wrap">
-                    {isMulti ? (
-                      <button
-                        type="button"
-                        className={`ref-source-chip ref-source-chip--switchable${
-                          isPickerOpen ? " ref-source-chip--active" : ""
-                        }`}
-                        title={tooltip}
-                        onClick={() =>
-                          setOpenVariantPicker(isPickerOpen ? null : r.edgeId)
-                        }
-                      >
-                        {r.node.data.type === "video" ? (
-                          <video className="ref-source-chip__img" src={mediaUrl(r.mediaId)} muted />
-                        ) : (
-                          <img
-                            className="ref-source-chip__img"
-                            src={mediaUrl(r.mediaId)}
-                            alt={r.node.data.title}
-                          />
-                        )}
-                        <span className="ref-source-chip__variant">
-                          v{(r.variantIdx ?? 0) + 1}
-                        </span>
-                        <span className="ref-source-chip__id">
-                          #{r.node.data.shortId}
-                        </span>
-                      </button>
-                    ) : (
-                      <div className="ref-source-chip" title={tooltip}>
-                        {r.node.data.type === "video" ? (
-                          <video className="ref-source-chip__img" src={mediaUrl(r.mediaId)} muted />
-                        ) : (
-                          <img
-                            className="ref-source-chip__img"
-                            src={mediaUrl(r.mediaId)}
-                            alt={r.node.data.title}
-                          />
-                        )}
-                        <span className="ref-source-chip__id">
-                          #{r.node.data.shortId}
-                        </span>
-                      </div>
-                    )}
-                    {isMulti && isPickerOpen && (
-                      <div
-                        className="ref-source-chip__picker"
-                        role="dialog"
-                        aria-label={`Pick variant for ${r.node.data.title}`}
-                      >
-                        {r.allVariants.map((mid, i) => {
-                          const isCurrent = i === (r.variantIdx ?? 0);
-                          return (
-                            <button
-                              key={mid}
-                              type="button"
-                              className={`ref-source-chip__picker-item${
-                                isCurrent ? " ref-source-chip__picker-item--current" : ""
-                              }`}
-                              onClick={() => void pickVariantForEdge(r.edgeId, i)}
-                              title={`Variant ${i + 1}`}
-                              aria-current={isCurrent ? "true" : undefined}
-                            >
-                              {r.node.data.type === "video" ? (
-                                <video className="ref-source-chip__picker-img" src={mediaUrl(mid)} muted />
-                              ) : (
-                                <img
-                                  className="ref-source-chip__picker-img"
-                                  src={mediaUrl(mid)}
-                                  alt={`Variant ${i + 1}`}
-                                />
-                              )}
-                              <span className="ref-source-chip__picker-label">
-                                v{i + 1}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {isEffectiveR2v && (
-                <MediaPicker
-                  kind="image"
-                  workspaceId={boardPublicId}
-                  multi={true}
-                  value={r2vAdditionalMediaIds}
-                  disabled={isWorking}
-                  onChange={(ids) => {
-                    const newIds = Array.isArray(ids) ? ids : (ids ? [ids] : []);
-                    setR2vAdditionalMediaIds(newIds);
-                  }}
-                  buttonText="+ Thêm ảnh"
-                />
-              )}
-            </div>
-            {/* Upstream refs still generating / never generated — same
-                unified notice the video sources use. */}
-            <SourcePendingNotice nodes={pendingRefNodes} />
-          </div>
-        )}
+        <VariantsStepper isVideo={isVideo} isPrompt={isPrompt} variants={variants} setVariants={setVariants} isWorking={isWorking} />
 
-        {/* Backend — which engine renders this dispatch. Sticky across
-            dialogs (settings store). Muse = muse2api gateway, or a
-            Pax worker via the provider-job queue; no Flow plan or
-            extension needed. */}
-        {!isPrompt && (
-          <div className="gen-dialog__field">
-            <span className="gen-dialog__label">
-              Backend
-              <InfoTip tip="Flow = Chrome extension → Google Flow (cần Flow plan). Muse = muse2api gateway (hoặc Pax worker) tự render, không cần Flow plan hay extension — cần cấu hình muse2api hoặc có worker đang chạy (xem hướng dẫn ở AI Providers → Muse)." />
-            </span>
-            <div className="aspect-chip-row">
-              <button
-                key="flow"
-                type="button"
-                className={`aspect-chip${mediaProvider === "flow" ? " aspect-chip--active" : ""}`} disabled={isWorking}
-                onClick={() => setMediaProvider("flow")}
-              >
-                Flow
-              </button>
-              {ENABLE_MUSE_BACKEND && (
-<button
-                key="muse"
-                type="button"
-                className={`aspect-chip${mediaProvider === "muse" ? " aspect-chip--active" : ""}`} disabled={isWorking}
-                onClick={() => setMediaProvider("muse")}
-              >
-                Muse
-              </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Aspect ratio — irrelevant for prompt nodes (text-only). */}
-        {!isPrompt && (
-          <div className="gen-dialog__field">
-            <span className="gen-dialog__label">Aspect ratio</span>
-            <div className="aspect-chip-row">
-              {(isVideo ? VIDEO_ASPECT_RATIOS : IMAGE_ASPECT_RATIOS).map((ar) => (
-                <button
-                  key={ar.key}
-                  className={`aspect-chip${aspectRatio === ar.key ? " aspect-chip--active" : ""}`}
-                  onClick={() => setAspectRatio(ar.key)}
-                  type="button"
-                  disabled={isWorking}
-                >
-                  {ar.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Model picker comes first so selecting Omni reveals its options
-            directly below. */}
-        {isVideo && isExtend ? (
-          <div className="gen-dialog__field">
-            <span className="gen-dialog__label">
-              Model
-              <InfoTip tip="Veo 3.1 Extension Lite (fZytfe): Model chuyên dụng của Flow để kéo dài video clip đã có." />
-            </span>
-            <div style={{ padding: '8px 12px', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '6px', fontSize: '13px', color: '#fff' }}>
-              Veo 3.1 Extension Lite (fZytfe)
-            </div>
-          </div>
-        ) : isVideo && (
-          <div className="gen-dialog__field">
-            <span className="gen-dialog__label">
-              Model
-              <InfoTip tip="Sticky — selection được lưu cho các lần dispatch sau (đồng bộ với Settings). Veo dùng i2v (1 source image); Omni Flash dùng ingredients từ ảnh và video đầu vào." />
-            </span>
-            <select
-              className="gen-dialog__select"
-              disabled={isWorking}
-              value={videoModelFamily === "omni_flash" ? "omni" : `veo:${videoQuality}`}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v === "omni") {
-                  setVideoModel("omni_flash");
-                  return;
-                }
-                const [, quality] = v.split(":") as ["veo", VideoQuality];
-                setVideoModel("veo");
-                setVideoQuality(quality);
-              }}
-            >
-              {VIDEO_MODEL_CHIPS.map((m) => {
-                if (m.kind === "omni") {
-                  return <option key="omni" value="omni">Omni Flash</option>;
-                }
-                const locked = m.ultraOnly && paygateTier !== "PAYGATE_TIER_TWO";
-                return (
-                  <option key={`veo:${m.quality}`} value={`veo:${m.quality}`} disabled={locked}>
-                    {m.label}{m.ultraOnly ? " · Ultra only" : ""}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-        )}
-
-        {/* Omni Flash options are visible only while Omni is selected. */}
-        {/* Omni Flash duration picker — video only, when the user's
-            settings select the Omni model family. Replaces the implicit
-            ~8s Veo duration with a per-dispatch radio. Credit cost is
-            surfaced beside each option. */}
-        {isOmniVideo && (
-          <div className="gen-dialog__field">
-            <span className="gen-dialog__label">
-              Resolution (Omni Flash)
-              <InfoTip tip="Chọn độ phân giải cho Omni Flash. 720p cho chất lượng cao hơn; 360p có chi phí thấp hơn." />
-            </span>
-            <div className="aspect-chip-row">
-              {OMNI_FLASH_RESOLUTIONS.map((resolution) => (
-                <button
-                  key={resolution}
-                  type="button"
-                  className={`aspect-chip${omniFlashResolution === resolution ? " aspect-chip--active" : ""}`}
-                  disabled={isWorking}
-                  onClick={() => setOmniFlashResolution(resolution as OmniFlashResolution)}
-                >
-                  {resolution}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {isOmniVideo && (
-          <div className="gen-dialog__field">
-            <span className="gen-dialog__label">
-              Duration (Omni Flash)
-              <InfoTip tip="Omni Flash dispatches via video:batchAsyncGenerateVideoReferenceImages with the upstream image(s) as IMAGE_USAGE_TYPE_ASSET refs. Duration scales credit cost: 4s=15, 6s=20, 8s=25, 10s=30." />
-            </span>
-            <div className="aspect-chip-row">
-              {OMNI_FLASH_DURATIONS.map((d) => {
-                const active = omniFlashDuration === d;
-                return (
-                  <button
-                    key={d}
-                    type="button"
-                    className={`aspect-chip${active ? " aspect-chip--active" : ""}`} disabled={isWorking}
-                    onClick={() =>
-                      setOmniFlashDuration(d as OmniFlashDuration)
-                    }
-                    title={`${d}s — ${OMNI_FLASH_CREDIT_COST[d]} credits`}
-                  >
-                    {d}s · {OMNI_FLASH_CREDIT_COST[d]}c
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Camera movement (video only) */}
-        {isVideo && (
-          <div className="gen-dialog__field">
-            <span className="gen-dialog__label">
-              Camera
-              <InfoTip tip="Static = locked-off, không zoom/pan — phù hợp e-commerce product shot. Dynamic = để auto-prompt tự quyết camera move (dolly / micro-shift / …)." />
-            </span>
-            <div className="aspect-chip-row">
-              {CAMERA_MOVEMENTS.map((c) => (
-                <button
-                  key={c.key}
-                  className={`aspect-chip${camera === c.key ? " aspect-chip--active" : ""}`}
-                  onClick={() => setCamera(c.key)}
-                  type="button"
-                  title={c.instruction}
-                  disabled={isWorking}
-                >
-                  {c.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Variants stepper — image + storyboard (storyboard reuses the
-            image dispatch path; up to 4 composite variants per request).
-            Hidden for video (its own one-clip-per-source-variant flow
-            above) and prompt nodes. */}
-        {!isVideo && !isPrompt && (
-          <div className="gen-dialog__field">
-            <span className="gen-dialog__label">Variants</span>
-            <div className="variants-stepper">
-              <button
-                type="button"
-                disabled={isWorking || variants <= 1}
-                aria-label="Decrease variants"
-                onClick={() => setVariants((v) => Math.max(1, v - 1))}
-              >
-                −
-              </button>
-              <span>{variants}</span>
-              <button
-                type="button"
-                disabled={isWorking || variants >= 4}
-                aria-label="Increase variants"
-                onClick={() => setVariants((v) => Math.min(4, v + 1))}
-              >
-                +
-              </button>
-              <span className="variants-stepper__hint">1–4 images per request</span>
-            </div>
-          </div>
-        )}
-
-        {/* Grid radio — storyboard only. Three options: 2x2 (4 panels),
-            2x3 (6), 2x4 (8). For 2x3 / 2x4 the rows × cols flip based on
-            the chosen aspect ratio: landscape → wide grid (e.g. 2×3),
-            portrait → tall grid (3×2). */}
-        {isStoryboard && (
-          <div className="gen-dialog__field">
-            <span className="gen-dialog__label">
-              Grid
-              <InfoTip tip="Storyboard renders as a SINGLE composite image — Flow draws the whole grid as one picture. The topic field above is your story (e.g. Rùa và Thỏ); the locked template wraps it for you. For 2×3 / 2×4 the rows × cols flip with the aspect ratio so panels stay readable on both landscape and portrait composites." />
-            </span>
-            <div className="aspect-chip-row">
-              {STORYBOARD_GRIDS.map((g) => {
-                const total = totalPanels(g);
-                const isPortrait = aspectRatio.includes("PORTRAIT");
-                // For symmetric 2x2 the label is just "2×2". For 2x3 /
-                // 2x4 we render the concrete rows×cols pair that Flow
-                // will receive, so the user sees orientation reflected.
-                let dimsLabel = "2×2";
-                if (g !== "2x2") {
-                  const big = g === "2x3" ? 3 : 4;
-                  dimsLabel = isPortrait ? `${big}×2` : `2×${big}`;
-                }
-                return (
-                  <button
-                    key={g}
-                    type="button"
-                    className={`aspect-chip${storyboardGrid === g ? " aspect-chip--active" : ""}`} disabled={isWorking}
-                    onClick={() => setStoryboardGrid(g)}
-                    title={`${total} panels (${dimsLabel})`}
-                  >
-                    {dimsLabel} · {total} panels
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        <StoryboardGridField isStoryboard={isStoryboard} storyboardGrid={storyboardGrid} setStoryboardGrid={setStoryboardGrid} aspectRatio={aspectRatio} isWorking={isWorking} />
 
         {/* Footer */}
         <div className="gen-dialog__footer">
