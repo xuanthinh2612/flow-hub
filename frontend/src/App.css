@@ -23,9 +23,9 @@ a { color: var(--accent); }
 .brand { display: flex; align-items: center; justify-content: space-between; padding: 0 6px 12px; }
 .brand-name { font-weight: 800; font-size: 16px; }
 nav a { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px; border-radius: 6px;
-  color: var(--text); text-decoration: none; font-size: 13.5px; }
+  color: var(--text); text-decoration: none; font-size: 13.5px; transition: all 0.15s ease; }
 nav a:hover { background: var(--surface); }
-nav a.active { background: var(--surface); font-weight: 600; color: var(--accent); }
+nav a.active { background: rgba(124, 156, 255, 0.14); font-weight: 600; color: var(--accent); border-left: 3px solid var(--accent); padding-left: 7px; }
 .nav-group { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
   padding: 14px 10px 4px; }
 main { padding: 20px 24px 60px 24px; min-width: 0; }
@@ -77,7 +77,7 @@ h1 { font-size: 20px; margin: 0 0 4px; }
   padding: 0 5px; border-radius: 4px; }
 .input { width: 100%; background: var(--surface); color: var(--text); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 7px 9px; font: inherit; font-size: 13.5px; outline: none; }
-.input:focus { border-color: var(--accent); }
+.input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(124, 156, 255, 0.2); }
 textarea.input { resize: vertical; }
 textarea.code { font: 12px/1.45 ui-monospace, Consolas, monospace; }
 .inline { display: flex; gap: 6px; align-items: center; }
@@ -94,17 +94,24 @@ textarea.code { font: 12px/1.45 ui-monospace, Consolas, monospace; }
 .btn-danger { color: var(--err); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .actions .btn-primary { flex: 1; padding: 9px 14px; }
-.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 999px;
-  padding: 4px 11px; font: inherit; font-size: 12.5px; cursor: pointer; }
-.chip:hover { border-color: var(--accent); }
-.chip.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  padding: 4px 12px; font: inherit; font-size: 12.5px; cursor: pointer; transition: all 0.15s ease; }
+.chip:hover { border-color: var(--accent); color: #fff; }
+.chip.active { background: rgba(124, 156, 255, 0.2); border-color: var(--accent); color: #ffffff; font-weight: 600;
+  box-shadow: 0 0 0 1px rgba(124, 156, 255, 0.25); }
 .chip small { opacity: .75; margin-left: 4px; }
 .chip.new { border-color: var(--warn); }
-.seg { display: flex; gap: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 3px; margin-bottom: 12px; flex-wrap: wrap; }
-.seg .chip { border: 0; border-radius: 6px; background: transparent; flex: 1; }
-.seg .chip.active { background: var(--surface); color: var(--text); font-weight: 600; }
+.seg { display: flex; gap: 4px; background: rgba(0, 0, 0, 0.28); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 4px; margin-bottom: 14px; flex-wrap: wrap; }
+.seg .chip { border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); flex: 1;
+  padding: 7px 12px; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s ease;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; }
+.seg .chip:hover:not(.active) { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.seg .chip.active { background: rgba(124, 156, 255, 0.18); border-color: rgba(124, 156, 255, 0.45); color: #ffffff;
+  font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+.seg .chip small { opacity: 0.7; margin-left: 4px; font-size: 11px; }
+.seg .chip.active small { color: #adc5ff; opacity: 0.95; }
 .switch { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; cursor: pointer; margin-right: 14px; }
 .switch input { accent-color: var(--accent); }
 details.adv summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin-bottom: 8px; }
