@@ -49,6 +49,8 @@ import { cameraInstruction } from "./lib/cameraInstruction";
 import { pickDefaultAspect } from "./lib/aspect";
 import { InfoTip } from "./sections/InfoTip";
 import { SourcePendingNotice } from "./sections/SourcePendingNotice";
+import { useDialogA11y } from "./hooks/useDialogA11y";
+import { useCloseOnOutsidePicker } from "./hooks/useCloseOnOutsidePicker";
 export function GenerationDialog() {
   const openDialog = useGenerationStore((s) => s.openDialog);
   const closeGenerationDialog = useGenerationStore((s) => s.closeGenerationDialog);
@@ -106,7 +108,6 @@ export function GenerationDialog() {
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLTextAreaElement>(null);
-  const triggerRef = useRef<Element | null>(null);
   const skipInitialFormSave = useRef<string | null>(null);
 
   const rfId = openDialog.rfId;
@@ -508,15 +509,6 @@ export function GenerationDialog() {
       setOmniVideoMode(isVideoRefMode ? "video_reference" : "default");
       setUploadVideoError(null);
       setUploadingVideo(false);
-      
-      triggerRef.current = document.activeElement;
-      // Focus textarea on open
-      setTimeout(() => firstFocusRef.current?.focus(), 50);
-    } else {
-      // Return focus on close
-      if (triggerRef.current instanceof HTMLElement) {
-        triggerRef.current.focus();
-      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rfId, boardId, boardPublicId]);
@@ -632,75 +624,24 @@ export function GenerationDialog() {
     isVideo,
   ]);
 
-  // Keyboard handling
-  useEffect(() => {
-    if (rfId === null) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        // ESC closes the variant picker first if open, otherwise the
-        // dialog. Lets the user back out of a stray picker click
-        // without losing their prompt + form state.
-        if (openVariantPicker !== null) {
-          e.preventDefault();
-          setOpenVariantPicker(null);
-          return;
-        }
-        e.preventDefault();
-        closeGenerationDialog();
+  useDialogA11y({
+    enabled: rfId !== null,
+    dialogRef,
+    firstFocusRef,
+    onEscape: () => {
+      // ESC closes the variant picker first if open, otherwise the dialog.
+      if (openVariantPicker !== null) {
+        setOpenVariantPicker(null);
+        return;
       }
-      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-        e.preventDefault();
-        handleSubmit();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+      closeGenerationDialog();
+    },
+    onSubmit: handleSubmit,
   });
-
-  // Click-outside to close the variant picker. We listen on
-  // `mousedown` instead of `click` so the close fires BEFORE the chip's
-  // `onClick` toggle would otherwise re-open it on the same gesture.
-  // A click that lands inside any `.ref-source-chip-wrap` is ignored —
-  // chip-internal handlers (toggle / swap / pick) own those.
-  useEffect(() => {
-    if (openVariantPicker === null) return;
-    const onPointerDown = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target?.closest(".ref-source-chip-wrap")) return;
-      setOpenVariantPicker(null);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [openVariantPicker]);
-
-  // Focus trap
-  useEffect(() => {
-    if (rfId === null) return;
-    const el = dialogRef.current;
-    if (!el) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Tab") return;
-      const focusable = el.querySelectorAll<HTMLElement>(
-        "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
-      );
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (e.shiftKey) {
-        if (document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        }
-      } else {
-        if (document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    };
-    el.addEventListener("keydown", onKeyDown);
-    return () => el.removeEventListener("keydown", onKeyDown);
-  }, [rfId]);
+  useCloseOnOutsidePicker(
+    openVariantPicker !== null,
+    () => setOpenVariantPicker(null),
+  );
 
   if (rfId === null) return null;
 
