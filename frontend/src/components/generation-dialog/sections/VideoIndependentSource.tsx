@@ -68,10 +68,10 @@ export function VideoIndependentSource({
               />
             ) : (
               <div className="source-info-box source-info-box--t2v">
-                <span className="source-info-box__icon">笨ｨ</span>
+                <span className="source-info-box__icon">🎥</span>
                 <div className="source-info-box__content" style={{ width: '100%' }}>
                   <div className="gen-dialog__label-row">
-                    <span className="source-info-box__title">Ch蘯ｿ ﾄ黛ｻ・ Text/Image to Video</span>
+                    <span className="source-info-box__title">Chọn đầu vào Text/Image to Video</span>
                     {isOmniVideo && (
                       <select
                         className="source-select-mini"
@@ -80,8 +80,8 @@ export function VideoIndependentSource({
                         disabled={isWorking}
                         style={MINI_SELECT_STYLE}
                       >
-                        <option value="default">蘯｢nh / Text (T2V/I2V/R2V)</option>
-                        <option value="video_reference">Tham chi蘯ｿu video</option>
+                        <option value="default">Ảnh / Text (T2V/I2V/R2V)</option>
+                        <option value="video_reference">Tham chiếu video</option>
                       </select>
                     )}
                     {independentVideoMediaIds.length === 1 && !isOmniVideo && (
@@ -92,7 +92,7 @@ export function VideoIndependentSource({
                         disabled={isWorking}
                         style={MINI_SELECT_STYLE}
                       >
-                        <option value="i2v">N盻訴 ti蘯ｿp (i2v)</option>
+                        <option value="i2v">Nối tiếp (i2v)</option>
                         <option value="r2v">Ingredients (r2v)</option>
                       </select>
                     )}
