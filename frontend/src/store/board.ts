@@ -51,7 +51,7 @@ export interface NodeGeneration extends Record<string, unknown> {
   charGender?: string | null;
   charVibe?: string;
   charExtras?: string;
-  selectedSourceIdx?: number[];
+  selectedSourceIdx?: number[] | null;
   independentVideoMediaIds?: string[];
   independentVideoMode?: "i2v" | "r2v";
   connectedVideoMode?: "i2v" | "r2v";
@@ -226,7 +226,11 @@ function migrateNodeGeneration(type: NodeType, data: Record<string, unknown>): N
     charVibe: String(draft.charVibe ?? data.charVibe ?? (type === "character" ? "clean" : "")),
     charExtras: String(draft.charExtras ?? data.charExtras ?? ""),
     storyboardGrid: (draft.storyboardGrid ?? data.storyboardGrid ?? (type === "Storyboard" ? "2x2" : undefined)) as StoryboardGrid | undefined,
-    selectedSourceIdx: Array.isArray(draft.selectedSourceIdx) ? draft.selectedSourceIdx as number[] : [],
+    selectedSourceIdx: Array.isArray(draft.selectedSourceIdx)
+      ? draft.selectedSourceIdx as number[]
+      : draft.selectedSourceIdx === null
+        ? null
+        : [],
     independentVideoMediaIds: (draft.independentVideoMediaIds ?? data.independentMediaIds ?? []) as string[],
     independentVideoMode: (draft.independentVideoMode ?? data.independentVideoMode ?? "i2v") as "i2v" | "r2v",
     connectedVideoMode: (draft.connectedVideoMode ?? data.connectedVideoMode ?? "i2v") as "i2v" | "r2v",
