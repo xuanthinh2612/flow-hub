@@ -56,6 +56,7 @@ GENERATION_KEY_MAP = {
     "operation": "operation",
     "video_mode": "videoMode",
     "video_reference": "videoReference",
+    "video_extend_mode": "videoExtendMode",
     "prompt": "prompt",
     "prompts": "prompts",
     "variants": "variants",

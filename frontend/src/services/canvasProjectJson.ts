@@ -7,6 +7,9 @@ type ExportModel = { family?: string; id?: string; quality?: string };
 
 function exactVideoModel(model: ExportModel | null, videoMode: unknown, aspectRatio: string | null): ExportModel | null {
   if (!model) return null;
+  if (videoMode === 'extend_video') {
+    return { ...model, id: model.id || 'veo_3_1_extension_lite' };
+  }
   if (model.family !== 'veo' || typeof model.quality !== 'string') return model;
 
   // Keep the exact model selected by the UI in the portable file. The UI
@@ -26,9 +29,9 @@ function exactVideoModel(model: ExportModel | null, videoMode: unknown, aspectRa
   return { ...model, id };
 }
 
-function videoModeForNode(node: ExportNode, config: Record<string, unknown>, edges: Array<{ source_id: number; target_id: number }>, nodesById: Map<string, ExportNode>): 't2v' | 'i2v' | 'r2v' | 'video_reference' {
+function videoModeForNode(node: ExportNode, config: Record<string, unknown>, edges: Array<{ source_id: number; target_id: number }>, nodesById: Map<string, ExportNode>): 't2v' | 'i2v' | 'r2v' | 'video_reference' | 'extend_video' {
   if (config.videoMode === 't2v' || config.videoMode === 'i2v' || config.videoMode === 'r2v'
-    || config.videoMode === 'video_reference') return config.videoMode;
+    || config.videoMode === 'video_reference' || config.videoMode === 'extend_video') return config.videoMode;
   const incoming = edges.filter((edge) => String(edge.target_id) === String(node.id));
   if (!incoming.length) return 't2v';
   return incoming.some((edge) => nodesById.get(String(edge.source_id))?.type === 'video') ? 'r2v' : 'i2v';
