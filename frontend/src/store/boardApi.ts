@@ -134,15 +134,20 @@ export async function createRequest(input: {
   let spec: Record<string, any>;
 
   if (type === "gen_video_text") {
+    const isPortrait = params.aspect_ratio === "VIDEO_ASPECT_RATIO_PORTRAIT";
     spec = {
       type: "t2v",
       family: "veo",
       prompt: params.prompt,
-      aspect: params.aspect_ratio === "VIDEO_ASPECT_RATIO_PORTRAIT" ? "9:16" : "16:9",
+      aspect: isPortrait ? "9:16" : "16:9",
       count: Number(params.variant_count) || 1,
     };
     if (params.video_quality) {
-      spec.model = `veo_3_1_t2v_${params.video_quality}`;
+      if (params.video_quality === "fast") {
+        spec.model = isPortrait ? "veo_3_1_t2v_fast_portrait" : "veo_3_1_t2v_fast";
+      } else {
+        spec.model = `veo_3_1_t2v_${params.video_quality}`;
+      }
     }
   } else if (type === "gen_video") {
     const extractVideoIds = Array.isArray(params.extract_video_ids) ? params.extract_video_ids : [];
@@ -165,22 +170,27 @@ export async function createRequest(input: {
       const startIds = (Array.isArray(params.start_media_ids) && params.start_media_ids.length > 0)
         ? params.start_media_ids
         : params.start_media_id ? [params.start_media_id] : [];
+      const isPortrait = params.aspect_ratio === "VIDEO_ASPECT_RATIO_PORTRAIT";
       spec = {
         type: "i2v",
         family: "veo",
         prompt: params.prompt,
-        aspect: params.aspect_ratio === "VIDEO_ASPECT_RATIO_PORTRAIT" ? "9:16" : "16:9",
+        aspect: isPortrait ? "9:16" : "16:9",
         count: startIds.length || 1,
         start_media_ids: startIds,
       };
       if (params.extract_start_video_id) spec.extract_start_video_id = params.extract_start_video_id;
       if (params.video_quality) {
-        const i2vModelIds: Record<string, string> = {
-          lite: "veo_3_1_i2v_lite",
-          fast_ultra: "veo_3_1_i2v_s_fast_ultra",
-          lite_low_priority: "veo_3_1_i2v_lite_low_priority",
-        };
-        spec.model = i2vModelIds[String(params.video_quality)] ?? `veo_3_1_i2v_${params.video_quality}`;
+        if (params.video_quality === "fast") {
+          spec.model = isPortrait ? "veo_3_1_i2v_s_fast_portrait" : "veo_3_1_i2v_s_fast";
+        } else {
+          const i2vModelIds: Record<string, string> = {
+            lite: "veo_3_1_i2v_lite",
+            fast_ultra: "veo_3_1_i2v_s_fast_ultra",
+            lite_low_priority: "veo_3_1_i2v_lite_low_priority",
+          };
+          spec.model = i2vModelIds[String(params.video_quality)] ?? `veo_3_1_i2v_${params.video_quality}`;
+        }
       }
     }
   } else if (type === "gen_video_omni") {

@@ -204,3 +204,46 @@ def test_api_canvas_request_video_reference_validation(tmp_path):
     assert job["spec"]["source_media_id"] == "vid-in-proj"
     assert job["spec"]["model"] == "abra_edit"
 
+
+def test_i2v_fast_model_resolution(tmp_path):
+    cfg = make_config(tmp_path / "data")
+    core = flowhub.main.Core(cfg)
+
+    # 1. Stale or generic model string 'veo_3_1_i2v_fast' re-resolves to exact aspect key
+    landscape = core.jobs.normalize({
+        "type": "i2v",
+        "prompt": "test prompt",
+        "start_media_id": "img-1",
+        "model": "veo_3_1_i2v_fast",
+        "aspect": "16:9",
+    })
+    assert landscape["model"] == "veo_3_1_i2v_s_fast"
+
+    portrait = core.jobs.normalize({
+        "type": "i2v",
+        "prompt": "test prompt",
+        "start_media_id": "img-1",
+        "model": "veo_3_1_i2v_fast",
+        "aspect": "9:16",
+    })
+    assert portrait["model"] == "veo_3_1_i2v_s_fast_portrait"
+
+    # 2. Resolving without explicit model using family='veo_3_1_fast'
+    auto_landscape = core.jobs.normalize({
+        "type": "i2v",
+        "prompt": "test prompt",
+        "start_media_id": "img-1",
+        "family": "veo_3_1_fast",
+        "aspect": "16:9",
+    })
+    assert auto_landscape["model"] == "veo_3_1_i2v_s_fast"
+
+    auto_portrait = core.jobs.normalize({
+        "type": "i2v",
+        "prompt": "test prompt",
+        "start_media_id": "img-1",
+        "family": "veo_3_1_fast",
+        "aspect": "9:16",
+    })
+    assert auto_portrait["model"] == "veo_3_1_i2v_s_fast_portrait"
+

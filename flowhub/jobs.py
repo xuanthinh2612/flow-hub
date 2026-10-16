@@ -173,11 +173,13 @@ class JobEngine:
             s["model"] = row["key"]
             s["family"] = row["family"]
             s["model_status"] = row["status"]
-        elif kind == "r2v" and s.get("model") in {
-                "veo_3_1_r2v_fast", "veo_3_1_r2v_fast_portrait", "veo_3_1_r2v_fast_landscape"}:
+        elif kind in ("r2v", "i2v", "t2v") and s.get("model") in {
+                "veo_3_1_r2v_fast", "veo_3_1_r2v_fast_portrait", "veo_3_1_r2v_fast_landscape",
+                "veo_3_1_i2v_fast", "veo_3_1_i2v_s_fast", "veo_3_1_i2v_s_fast_portrait",
+                "veo_3_1_t2v_fast", "veo_3_1_t2v_fast_portrait"}:
             # Fast uses distinct Flow keys for portrait and landscape.
             # Resolve stale/mismatched picker values against the selected aspect.
-            row = self.catalog.resolve("r2v", "veo_3_1_fast", s.get("aspect_label"))
+            row = self.catalog.resolve(kind, "veo_3_1_fast", s.get("aspect_label"))
             s["model"] = row["key"]
             s["family"] = row["family"]
             s["model_status"] = row["status"]

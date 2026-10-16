@@ -117,12 +117,13 @@ Body Flow Hub dựng **khớp từng byte** với request thật của trang (`t
 |---|---|
 | Ảnh (ogiZ0b) | `BELUGA`, `HARBOR_SEAL`, `GEM_PIX_2` · đủ 5 tỉ lệ · 1/2/4 biến thể **trong 1 request** · ảnh tham chiếu · gắn Nhân vật (`character_id`) |
 | Text → video (YhhmEf) | `veo_3_1_t2v_fast`, `…_portrait`, `veo_3_1_t2v_lite` (chung key 2 tỉ lệ), `abra_t2v_8s/10s` (+ `_360p`) |
+| Ảnh → video (eb1hJf) | `veo_3_1_i2v_s_fast` (16:9), `veo_3_1_i2v_s_fast_portrait` (9:16), `veo_3_1_i2v_lite` (2 tỉ lệ) |
 | Đầu + cuối (nprQif) | `omni_flash_i2v_8s_first_last` **và `…_360p`** (cùng body, key mang resolution, không có slot option như YhhmEf/MZZa6b), `veo_3_1_i2v_s_fast_fl` (16:9), `veo_3_1_interpolation_lite` · crop giữa khi tỉ lệ ảnh ≠ video |
-| Ingredients (MZZa6b) | `abra_r2v_6s_360p`, `veo_3_1_r2v_fast_landscape` |
+| Ingredients (MZZa6b) | `abra_r2v_6s_360p`, `veo_3_1_r2v_fast_landscape`, `veo_3_1_r2v_fast_portrait` |
 | Extend video (fZytfe) | `veo_3_1_extension_lite` (fZytfe; kéo dài clip — nguồn `[null, mediaId, 169, 192]` + prompt + scene) · poll `jwpduf → as29s` như các loại video khác |
 | Upload (maseQ) | action reCAPTCHA `UPLOAD_IMAGE` |
 
-Chưa thấy trên Flow hiện tại (*unverified* trong Models): ảnh → video (eb1hJf, cả Veo lẫn Omni),
+Chưa thấy trên Flow hiện tại (*unverified* trong Models):
 upscale (SPrCad), sửa ảnh, `NARWHAL`, Omni 4s/6s, key 9:16 của Veo Fast đầu + cuối. Tạo thử một
 lần trên giao diện Flow — Observation sẽ xác minh hoặc báo builder lệch.
 

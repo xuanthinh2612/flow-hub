@@ -23,6 +23,10 @@ function exactVideoModel(model: ExportModel | null, videoMode: unknown, aspectRa
   if (mode === 'r2v') {
     const landscapeFastSuffix = model.quality === 'fast' && !portrait ? '_landscape' : '';
     id = `veo_3_1_r2v_${model.quality}${landscapeFastSuffix}`;
+  } else if (mode === 'i2v' && model.quality === 'fast') {
+    id = portrait ? 'veo_3_1_i2v_s_fast_portrait' : 'veo_3_1_i2v_s_fast';
+  } else if (mode === 't2v' && model.quality === 'fast') {
+    id = portrait ? 'veo_3_1_t2v_fast_portrait' : 'veo_3_1_t2v_fast';
   } else {
     id = `veo_3_1_${mode === 't2v' ? 't2v' : 'i2v'}_${model.quality}`;
   }

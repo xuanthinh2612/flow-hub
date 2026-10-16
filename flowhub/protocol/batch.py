@@ -323,7 +323,7 @@ def text_video_request(prompt: str, project_id: str, aspect: int, model: str) ->
 
 def veo_video_request(prompt: str, project_id: str, source_media_id: str, aspect: int, model: str,
                       crop: Optional[list] = None) -> str:
-    """Veo image-to-video (eb1hJf). UNVERIFIED on the current build."""
+    """Veo image-to-video (eb1hJf). VERIFIED for veo_3_1_i2v_s_fast(_portrait)."""
     request = [prompt_block(prompt), model, aspect, None, frame_block(source_media_id, crop), client_ids()]
     return build_envelope(RPC_GEN_VIDEO, [[request], context(project_id), [client_uuid(), 2]])
 

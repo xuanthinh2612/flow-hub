@@ -71,9 +71,13 @@ def _seed_rows() -> list[dict]:
             omni("first_last", f"omni_flash_i2v_{duration}s_first_last{sfx}", duration, res, default=True, sort=10)
             omni("r2v", f"abra_r2v_{duration}s{sfx}", duration, res, default=True, sort=10)
 
-    add("i2v", "veo_3_1_lite", "Veo 3.1 Lite", "veo_3_1_i2v_lite", default=True, sort=10)
-    add("i2v", "veo_3_1_fast_ultra", "Veo 3.1 Fast (Ultra)", "veo_3_1_i2v_s_fast_ultra", sort=20)
-    add("i2v", "veo_3_1_lite_low", "Veo 3.1 Lite Low Priority (Ultra)", "veo_3_1_i2v_lite_low_priority", sort=30)
+    add("i2v", "veo_3_1_fast", "Veo 3.1 Fast", "veo_3_1_i2v_s_fast", aspect="landscape", status=_V, note=_OBS,
+        default=True, sort=10)
+    add("i2v", "veo_3_1_fast", "Veo 3.1 Fast", "veo_3_1_i2v_s_fast_portrait", aspect="portrait", status=_V,
+        note=_OBS, sort=10)
+    add("i2v", "veo_3_1_lite", "Veo 3.1 Lite", "veo_3_1_i2v_lite", sort=20)
+    add("i2v", "veo_3_1_fast_ultra", "Veo 3.1 Fast (Ultra)", "veo_3_1_i2v_s_fast_ultra", sort=30)
+    add("i2v", "veo_3_1_lite_low", "Veo 3.1 Lite Low Priority (Ultra)", "veo_3_1_i2v_lite_low_priority", sort=40)
 
     add("first_last", "veo_3_1_fast", "Veo 3.1 Fast", "veo_3_1_i2v_s_fast_fl", aspect="landscape", status=_V,
         note=_OBS + " (16:9; key 9:16 chưa thấy)", sort=20)
