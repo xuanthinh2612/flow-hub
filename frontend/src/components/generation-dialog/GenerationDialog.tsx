@@ -1,10 +1,7 @@
 import { useEffect, useReducer, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useGenerationStore } from "../../store/generation";
 import { useBoardStore, type StoryboardGrid } from "../../store/board";
-import {
-  buildStoryboardPrompt,
-  normaliseStoryboardGrid,
-} from "../../lib/storyboardPrompt";
+import { normaliseStoryboardGrid } from "../../lib/storyboardPrompt";
 import {
   useSettingsStore,
   type MediaProviderKey,
@@ -14,10 +11,7 @@ import {
   type VideoQuality,
 } from "../../store/settings";
 import {
-  autoPrompt as autoPromptApi,
-  autoPromptBatch as autoPromptBatchApi,
   patchEdge,
-  patchNode,
   uploadImage,
 } from "../../canvas/canvasApi";
 import {
@@ -49,6 +43,12 @@ import { VideoConnectedSource } from "./sections/VideoConnectedSource";
 import { PromptField } from "./sections/PromptField";
 import { useDialogA11y } from "./hooks/useDialogA11y";
 import { useCloseOnOutsidePicker } from "./hooks/useCloseOnOutsidePicker";
+import { runAutoPrompt } from "./submit/runAutoPrompt";
+import { submitStoryboard } from "./submit/submitStoryboard";
+import { submitPrompt } from "./submit/submitPrompt";
+import { submitCharacter } from "./submit/submitCharacter";
+import { submitImage } from "./submit/submitImage";
+import { buildVideoSubmit } from "./submit/submitVideo";
 export function GenerationDialog() {
   const rfId = useGenerationStore((s) => s.openDialog.rfId);
   const boardId = useBoardStore((s) => s.boardId);
@@ -501,112 +501,37 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
   }
 
   async function handleSubmit() {
-    // FIX(bug 1): Keep keyboard submits behind the same readiness guard as the button.
     if (!canGenerate) return;
-    // Defense in depth — block submit if the LLM layer is still composing
-    // for this node from a prior dialog session. The Generate button is
-    // already `disabled` at this point, but the user could still trigger
-    // ⌘↵ via keyboard.
-    if (
-      node?.data.autoPromptStatus === "pending"
-      || node?.data.aiBriefStatus === "pending"
-    ) {
-      return;
-    }
+    if (node?.data.autoPromptStatus === "pending" || node?.data.aiBriefStatus === "pending") return;
+
     if (isStoryboard) {
-      // Storyboard is a thin image-node wrapper. The user's prompt
-      // textarea is the TOPIC; we wrap it in the locked template and
-      // dispatch via the standard image path — Flow renders a single
-      // composite NxN grid that visually narrates the topic.
-      const wrapped = buildStoryboardPrompt(
-        prompt,
-        storyboardGrid,
-        aspectRatio,
-      );
-      // Persist the chosen grid + topic on the node so reload shows
-      // the same settings and `StoryboardBody` can render the grid badge.
-      useBoardStore.getState().updateNodeGeneration(rfId, { prompt, storyboardGrid });
-      useBoardStore.getState().updateNodeData(rfId, { aiBrief: prompt });
-      const dbId = parseInt(rfId, 10);
-      if (!isNaN(dbId)) patchNode(dbId, { data: { aiBrief: prompt } }).catch(() => {});
-      dispatchGeneration(rfId, {
-        prompt: wrapped,
-        aspectRatio,
-        kind: "image",
-        variantCount: variants,
-      });
-      closeGenerationDialog();
+      submitStoryboard({ rfId, prompt, storyboardGrid, aspectRatio, variants, dispatchGeneration, closeGenerationDialog });
       return;
     }
     if (isPrompt) {
-      // Prompt nodes are user-authored seed text. The dialog is just
-      // an editor — Save persists whatever the user typed (or cleared).
-      // No auto-synth, no image/video dispatch. Downstream image/video
-      // nodes pick up this prompt as upstream context at their own
-      // dispatch time.
-      const finalPrompt = prompt;
-      useBoardStore.getState().updateNodeGeneration(rfId, { prompt: finalPrompt });
-      useBoardStore.getState().updateNodeData(rfId, {
-        status: finalPrompt.trim() ? "done" : "idle",
-      });
-      const dbId = parseInt(rfId, 10);
-      if (!isNaN(dbId)) patchNode(dbId, { status: finalPrompt.trim() ? "done" : "idle" }).catch(() => {});
-      closeGenerationDialog();
+      submitPrompt(rfId, prompt, closeGenerationDialog);
       return;
     }
     if (isCharacter) {
-      const built = buildCharacterPrompt(charGender, charCountry, charVibe, charExtras);
-      const finalPrompt = prompt.trim() || built;
-      // Stamp the picker selections directly onto the node so the detail
-      // panel can show "Country: Nhật Bản · Vibe: Douyin" later. These
-      // choices don't round-trip through the backend params (they're
-      // baked into the prompt text), so we persist them here at dispatch
-      // time. patchNode merges, so this fires alongside the generation
-      // store's own status patches without colliding.
-      useBoardStore.getState().updateNodeGeneration(rfId, {
-        prompt: finalPrompt, charCountry, charVibe, charGender, charExtras,
+      submitCharacter({
+        rfId, prompt, charGender, charCountry, charVibe, charExtras, aspectRatio, variants,
+        dispatchGeneration, closeGenerationDialog,
       });
-      dispatchGeneration(rfId, {
-        prompt: finalPrompt,
-        aspectRatio,
-        variantCount: variants,
-      });
-      closeGenerationDialog();
       return;
     }
-    // Image / video branch — if user left the prompt blank, synthesise
-    // from upstream briefs (composition prompt for image, motion prompt
-    // for video) before dispatching. For image with variants > 1 use the
-    // batch endpoint so each variant gets its own pose-distinct prompt.
+
     let finalPrompt = prompt;
     let perVariantPrompts: string[] | undefined;
     if (!finalPrompt.trim()) {
-      const dbId = parseInt(rfId, 10);
-      if (isNaN(dbId)) {
-        // FIX(bug 8): Surface invalid node ids instead of silently ignoring auto-prompt.
-        useGenerationStore.setState({ error: "Auto-prompt failed: invalid node id" });
-        return;
-      }
       setAutoBuilding(true);
-      // Mark the target node as "auto-prompt running" so the canvas
-      // can render a busy treatment + block duplicate dispatches on
-      // the same node. Cleared in finally below regardless of outcome.
-      useBoardStore.getState().updateNodeData(rfId, { autoPromptStatus: "pending" });
       try {
-        if (!isVideo && variants > 1) {
-          const res = await autoPromptBatchApi(dbId, variants);
-          perVariantPrompts = res.prompts;
-          finalPrompt = res.prompts[0] ?? "";
-        } else {
-          const res = await autoPromptApi(dbId, isVideo ? { camera } : undefined);
-          finalPrompt = res.prompt;
-          setPrompt(finalPrompt);
-        }
+        const result = await runAutoPrompt({ rfId, isVideo, variants, camera });
+        finalPrompt = result.finalPrompt;
+        perVariantPrompts = result.perVariantPrompts;
+        if (result.displayPrompt !== undefined) setPrompt(result.displayPrompt);
         setAutoPromptUsed(true);
-        useBoardStore.getState().updateNodeData(rfId, { autoPromptStatus: undefined });
       } catch (err) {
         setAutoBuilding(false);
-        useBoardStore.getState().updateNodeData(rfId, { autoPromptStatus: "failed" });
         useGenerationStore.setState({
           error: err instanceof Error
             ? `Auto-prompt failed: ${err.message}`
@@ -616,166 +541,28 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
       }
       setAutoBuilding(false);
     }
+
     if (isVideo) {
-      // Append the camera-movement constraint to whatever motion prompt
-      // we have (manual or auto-synthesised). Putting it last makes it
-      // the dominant instruction the model resolves against — overrides
-      // any conflicting "slow dolly-in" the synthesizer might have output.
       const camInstruction = cameraInstruction(camera);
-      const videoPrompt = camInstruction
-        ? `${finalPrompt}. ${camInstruction}`
-        : finalPrompt;
-
-      // 0. Video Reference (Omni Flash abra_edit - jIps6)
-      if (isOmniVideo && omniVideoMode === "video_reference") {
-        const refMid = videoReferenceMediaId || (videoInfo?.mode === "video_continuation" ? videoInfo.sourceMediaId : null);
-        if (!refMid) {
-          useBoardStore.getState().updateNodeData(rfId, {
-            extractError: "Vui lòng chọn hoặc tải lên video tham chiếu.",
-          });
-          return;
-        }
-        useBoardStore.getState().updateNodeGeneration(rfId, {
-          videoMode: "video_reference",
-          videoReference: { sourceMediaId: refMid },
-          r2vAdditionalMediaIds,
-        });
-        dispatchGeneration(rfId, {
-          prompt: videoPrompt,
-          aspectRatio,
-          kind: "video",
-          cameraMode: camera,
-          videoMode: "video_reference",
-          sourceMediaId: refMid,
-          sourceMediaIds: r2vAdditionalMediaIds.length > 0 ? r2vAdditionalMediaIds : undefined,
-          variantCount: variants,
-        });
-        closeGenerationDialog();
-        return;
-      }
-
-      // 1. Text-to-Video (không có node nối trước) / Independent Video
-      if (videoInfo?.mode === "t2v") {
-        const actualMode = independentVideoMediaIds.length > 1
-          ? "r2v"
-          : independentVideoMediaIds.length === 1
-            ? independentVideoMode
-            : "t2v";
-
-        useBoardStore.getState().updateNodeGeneration(rfId, {
-          independentVideoMediaIds,
-          independentVideoMode,
-          videoMode: actualMode,
-        });
-
-        dispatchGeneration(rfId, {
-          prompt: videoPrompt,
-          aspectRatio,
-          kind: "video",
-          cameraMode: camera,
-          videoMode: actualMode,
-          sourceMediaIds: independentVideoMediaIds.length > 0 ? independentVideoMediaIds : undefined,
-          variantCount: variants,
-        });
-        closeGenerationDialog();
-        return;
-      }
-
-      // 2. Nối tiếp video (lấy frame cuối cùng của video trước) hoặc Extend video (Veo Extension Lite)
-      if (videoInfo?.mode === "video_continuation") {
-        if (!videoInfo.sourceMediaId && !hasPendingUpstream) {
-          useBoardStore.getState().updateNodeData(rfId, {
-            extractError: isExtend
-              ? "Video trước chưa có file để kéo dài."
-              : "Video trước chưa có file để trích xuất frame cuối.",
-          });
-          return;
-        }
-
-        closeGenerationDialog();
-        useBoardStore.getState().updateNodeData(rfId, { extractingFrame: false, extractError: null });
-
-        if (isExtend) {
-          dispatchGeneration(rfId, {
-            prompt: videoPrompt,
-            aspectRatio,
-            kind: "video",
-            cameraMode: camera,
-            videoMode: "extend_video",
-            sourceMediaId: videoInfo.sourceMediaId,
-            variantCount: variants,
-          });
-          return;
-        }
-
-        dispatchGeneration(rfId, {
-          prompt: videoPrompt,
-          aspectRatio,
-          kind: "video",
-          cameraMode: camera,
-          videoMode: "i2v",
-          sourceVideoId: videoInfo.sourceMediaId,
-          variantCount: 1,
-        });
-        return;
-      }
-
-      // 3. Ảnh -> Video (i2v hoặc r2v)
-      if (isEffectiveR2v) {
-        closeGenerationDialog();
-        const sources = refSourceNodes.flatMap((r) => r.mediaId
-          ? [{ mediaId: r.mediaId, isVideo: r.node.data.type === "video" }]
-          : []);
-        const sourceMediaIds = [
-          ...sources.filter((source) => !source.isVideo).map((source) => source.mediaId),
-          ...r2vAdditionalMediaIds,
-        ];
-        const sourceVideoIds = sources.filter((source) => source.isVideo).map((source) => source.mediaId);
-        useBoardStore.getState().updateNodeGeneration(rfId, { r2vAdditionalMediaIds });
-        useBoardStore.getState().updateNodeData(rfId, { extractingFrame: false, extractError: null });
-        dispatchGeneration(rfId, {
-          prompt: videoPrompt,
-          aspectRatio,
-          kind: "video",
-          cameraMode: camera,
-          videoMode: "r2v",
-          sourceMediaIds,
-          sourceVideoIds,
-          variantCount: variants,
-        });
-        return;
-      }
-
-      // For i2v
-      const finalPicked = sourceMediaIds.filter((_, i) => selectedSourceIdx.has(i));
-      const useMulti = finalPicked.length > 1;
-
-      if (videoInfo?.mode === "i2v") {
-        useBoardStore.getState().updateNodeGeneration(rfId, { connectedVideoMode });
-      }
-
-      dispatchGeneration(rfId, {
-        prompt: videoPrompt,
-        aspectRatio,
-        kind: "video",
-        cameraMode: camera,
-        videoMode: actualConnectedMode as "i2v" | "r2v",
-        sourceMediaId: useMulti ? undefined : finalPicked[0],
-        sourceMediaIds: useMulti ? finalPicked : undefined,
-        variantCount: actualConnectedMode === "r2v" ? variants : (useMulti ? finalPicked.length * variants : variants),
+      const videoPrompt = camInstruction ? `${finalPrompt}. ${camInstruction}` : finalPrompt;
+      const result = buildVideoSubmit({
+        rfId, prompt: videoPrompt, aspectRatio, camera, variants, isOmniVideo, omniVideoMode,
+        videoReferenceMediaId, videoInfo, r2vAdditionalMediaIds, independentVideoMediaIds,
+        independentVideoMode, hasPendingUpstream, isExtend, isEffectiveR2v, refSourceNodes,
+        sourceMediaIds, selectedSourceIdx, actualConnectedMode, connectedVideoMode,
       });
-      closeGenerationDialog();
-      return;
-    } else {
-      dispatchGeneration(rfId, {
-        prompt: finalPrompt,
-        aspectRatio,
-        variantCount: variants,
-        prompts: perVariantPrompts,
-      });
+      if (!result.ok) {
+        useBoardStore.getState().updateNodeData(rfId, { extractError: result.nodeError });
+        return;
+      }
+      if (result.patchGeneration) useBoardStore.getState().updateNodeGeneration(rfId, result.patchGeneration);
+      if (result.patchNodeData) useBoardStore.getState().updateNodeData(rfId, result.patchNodeData);
+      dispatchGeneration(rfId, result.dispatch);
       closeGenerationDialog();
       return;
     }
+
+    submitImage({ rfId, finalPrompt, perVariantPrompts, aspectRatio, variants, dispatchGeneration, closeGenerationDialog });
   }
 
   // The dialog's local `autoBuilding` flag covers the in-flight window
