@@ -184,8 +184,9 @@ export async function createRequest(input: {
       }
     }
   } else if (type === "gen_video_omni") {
+    const isT2V = params.video_mode === "t2v";
     spec = {
-      type: "r2v",
+      type: isT2V ? "t2v" : "r2v",
       family: "omni_flash",
       prompt: params.prompt,
       aspect: params.aspect_ratio === "VIDEO_ASPECT_RATIO_PORTRAIT" ? "9:16" : "16:9",
@@ -196,7 +197,9 @@ export async function createRequest(input: {
       count: Number(params.variant_count) || 1,
     };
     if (params.duration_s) {
-      spec.model = `abra_r2v_${params.duration_s}s${params.resolution === "360p" ? "_360p" : ""}`;
+      spec.model = isT2V
+        ? `abra_t2v_${params.duration_s}s${params.resolution === "360p" ? "_360p" : ""}`
+        : `abra_r2v_${params.duration_s}s${params.resolution === "360p" ? "_360p" : ""}`;
     }
   } else if (type === "gen_image") {
     let aspect = "16:9";

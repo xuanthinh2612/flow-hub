@@ -85,6 +85,26 @@ test("canSubmitVideo keeps video readiness conditions", () => {
     }),
     false,
   );
+
+  assert.equal(
+    canSubmitVideo({
+      isVideo: true,
+      isOmniVideo: true,
+      omniVideoMode: "default",
+      videoReferenceMediaId: null,
+      videoInfo: video("t2v"),
+      hasPendingUpstream: false,
+      extractingFrame: false,
+      independentVideoMediaIds: [],
+      prompt: "cinematic sunset over mountains",
+      isExtend: false,
+      isEffectiveR2v: false,
+      refSourceNodes: [],
+      r2vAdditionalMediaIds: [],
+      selectedSourceCount: 0,
+    }),
+    true,
+  );
 });
 
 test("computeCanGenerate preserves character and busy gating", () => {

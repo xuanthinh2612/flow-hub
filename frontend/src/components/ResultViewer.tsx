@@ -35,6 +35,10 @@ const VIDEO_QUALITY_LABELS: Record<string, string> = {
   abra_r2v_6s: "Omni Flash · 6s",
   abra_r2v_8s: "Omni Flash · 8s",
   abra_r2v_10s: "Omni Flash · 10s",
+  abra_t2v_4s: "Omni Flash · 4s",
+  abra_t2v_6s: "Omni Flash · 6s",
+  abra_t2v_8s: "Omni Flash · 8s",
+  abra_t2v_10s: "Omni Flash · 10s",
 };
 
 /** Format Flow's aspect-ratio enum to the human label shown on the node

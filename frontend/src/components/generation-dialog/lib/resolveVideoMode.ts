@@ -153,9 +153,7 @@ export function canSubmitVideo(input: CanSubmitVideoInput): boolean {
             (Boolean(videoInfo.sourceMediaId) || hasPendingUpstream))) &&
         !extractingFrame
       : videoInfo?.mode === "t2v"
-        ? (isOmniVideo
-            ? independentVideoMediaIds.length > 0
-            : prompt.trim().length > 0 || independentVideoMediaIds.length > 0) &&
+        ? (prompt.trim().length > 0 || independentVideoMediaIds.length > 0) &&
           !extractingFrame
         : videoInfo?.mode === "video_continuation"
           ? (Boolean(videoInfo.sourceMediaId) || hasPendingUpstream) &&

@@ -65,6 +65,15 @@ test("independent t2v keeps its effective mode and source IDs", () => {
   assert.deepEqual(result.dispatch.sourceMediaIds, ["a", "b"]);
 });
 
+test("omni flash pure text-to-video dispatches t2v without media sources", () => {
+  const result = buildVideoSubmit(base({ isOmniVideo: true, independentVideoMediaIds: [] }));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.dispatch.videoMode, "t2v");
+  assert.equal(result.dispatch.sourceMediaIds, undefined);
+  assert.equal(result.dispatch.sourceMediaId, undefined);
+});
+
 test("continuation extend and last-frame dispatch use their original source fields and counts", () => {
   const extend = buildVideoSubmit(base({ videoInfo: info("video_continuation", "video-1"), isExtend: true }));
   assert.equal(extend.ok, true);

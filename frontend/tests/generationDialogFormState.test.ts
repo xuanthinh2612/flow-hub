@@ -158,3 +158,29 @@ test("hydrateForm preserves saved videoQuality in continuation mode", () => {
   assert.equal(formState.videoQuality, "quality");
 });
 
+test("serializeForm sets abra_t2v model ID for t2v mode and abra_r2v for r2v mode", () => {
+  const t2vSerialized = serializeForm({ ...form(), videoModel: "omni_flash", omniFlashDuration: 6, omniFlashResolution: "720p" }, {
+    targetType: "video",
+    isVideo: true,
+    isCharacter: false,
+    isStoryboard: false,
+    videoMode: "t2v",
+    videoSourceNodeFamily: undefined,
+    hasAnyIncomingEdge: false,
+    currentGeneration: {},
+  });
+  assert.deepEqual(t2vSerialized.model, { family: "omni_flash", id: "abra_t2v_6s" });
+
+  const r2vSerialized = serializeForm({ ...form(), videoModel: "omni_flash", omniFlashDuration: 8, omniFlashResolution: "360p" }, {
+    targetType: "video",
+    isVideo: true,
+    isCharacter: false,
+    isStoryboard: false,
+    videoMode: "r2v",
+    videoSourceNodeFamily: undefined,
+    hasAnyIncomingEdge: true,
+    currentGeneration: {},
+  });
+  assert.deepEqual(r2vSerialized.model, { family: "omni_flash", id: "abra_r2v_8s_360p" });
+});
+

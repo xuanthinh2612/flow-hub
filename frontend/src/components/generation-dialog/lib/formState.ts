@@ -215,7 +215,9 @@ export function serializeForm(
         family: "omni_flash",
         id: isVideoRefActive
           ? "abra_edit"
-          : `abra_r2v_${form.omniFlashDuration}s${form.omniFlashResolution === "360p" ? "_360p" : ""}`,
+          : videoMode === "t2v"
+            ? `abra_t2v_${form.omniFlashDuration}s${form.omniFlashResolution === "360p" ? "_360p" : ""}`
+            : `abra_r2v_${form.omniFlashDuration}s${form.omniFlashResolution === "360p" ? "_360p" : ""}`,
       }
     : { family: "veo", quality: form.videoQuality };
   const isImageNode = targetType === "image" || targetType === "character" || isStoryboard;

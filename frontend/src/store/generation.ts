@@ -445,7 +445,8 @@ function attachPoll(rfId: string, requestId: string | number, opts: PollOpts) {
           } else if (req.type === "gen_video_omni") {
             const d = req.params["duration_s"] as number | undefined;
             if (d === 4 || d === 6 || d === 8 || d === 10) {
-              stampedVideoQuality = `abra_r2v_${d}s`;
+              const prefix = req.params["video_mode"] === "t2v" ? "abra_t2v" : "abra_r2v";
+              stampedVideoQuality = `${prefix}_${d}s`;
             }
           }
           useBoardStore.getState().updateNodeData(rfId, {
@@ -964,7 +965,13 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
         ? selectedVideoFamily === "omni_flash"
           ? {
               family: "omni_flash",
-              id: configuredModel?.id ?? (effectiveVideoMode === "video_reference" ? "abra_edit" : `abra_r2v_${selectedDuration}s${selectedResolution === "360p" ? "_360p" : ""}`),
+              id: configuredModel?.id ?? (
+                effectiveVideoMode === "video_reference"
+                  ? "abra_edit"
+                  : effectiveVideoMode === "t2v"
+                    ? `abra_t2v_${selectedDuration}s${selectedResolution === "360p" ? "_360p" : ""}`
+                    : `abra_r2v_${selectedDuration}s${selectedResolution === "360p" ? "_360p" : ""}`
+              ),
             }
           : effectiveVideoMode === "extend_video"
           ? { family: "veo", id: "veo_3_1_extension_lite" }
@@ -1095,6 +1102,27 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
           });
         }
 
+        // Omni Flash pure Text-to-Video (no ingredients)
+        else if (isOmni && videoMode === "t2v" && !opts.sourceMediaId && (!opts.sourceMediaIds || opts.sourceMediaIds.length === 0)) {
+          reqDto = await createRequest({
+            type: "gen_video_omni",
+            node_id: isNaN(nodeDbId) ? rfId : nodeDbId,
+            params: {
+              prompt: opts.prompt,
+              media_provider: mediaProvider,
+              project_id: projectId,
+              video_mode: "t2v",
+              ref_media_ids: [],
+              extract_video_ids: [],
+              duration_s: generation.duration ?? settings.omniFlashDuration,
+              resolution: generation.resolution ?? settings.omniFlashResolution,
+              aspect_ratio: effectiveAspectRatio,
+              paygate_tier: opts.paygateTier ?? get().paygateTier ?? "PAYGATE_TIER_ONE",
+              variant_count: variantCount,
+            },
+          });
+        }
+
         // Both Omni Flash and Veo's r2v mode take ingredients (ref_media_ids)
         else if (isOmni || videoMode === "r2v") {
           const upstreamSources = opts.sourceMediaIds || opts.sourceVideoIds
@@ -1132,6 +1160,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
                 prompt: opts.prompt,
                 media_provider: mediaProvider,
                 project_id: projectId,
+                video_mode: "r2v",
                 ref_media_ids: ingredients,
                 extract_video_ids: videoIngredients,
                 duration_s: generation.duration ?? settings.omniFlashDuration,

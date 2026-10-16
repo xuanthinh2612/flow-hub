@@ -204,7 +204,11 @@ function migrateNodeGeneration(type: NodeType, data: Record<string, unknown>): N
     ? videoFamily === "omni_flash"
       ? {
           family: "omni_flash",
-          id: videoMode === "video_reference" ? "abra_edit" : `abra_r2v_${Number(duration ?? 8)}s${String(resolution ?? "720p") === "360p" ? "_360p" : ""}`,
+          id: videoMode === "video_reference"
+            ? "abra_edit"
+            : videoMode === "t2v"
+              ? `abra_t2v_${Number(duration ?? 8)}s${String(resolution ?? "720p") === "360p" ? "_360p" : ""}`
+              : `abra_r2v_${Number(duration ?? 8)}s${String(resolution ?? "720p") === "360p" ? "_360p" : ""}`,
         }
       : { family: "veo", ...(typeof quality === "string" ? { quality } : {}) }
     : isImageGenerator ? { family: "image", ...(typeof imageModelId === "string" ? { id: imageModelId } : {}) } : undefined;
