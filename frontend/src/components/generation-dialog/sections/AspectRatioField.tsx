@@ -1,10 +1,10 @@
-import { IMAGE_ASPECT_RATIOS, VIDEO_ASPECT_RATIOS } from "../constants";
+import { IMAGE_ASPECT_RATIOS, VIDEO_ASPECT_RATIOS, type AspectKey } from "../constants";
 
 interface AspectRatioFieldProps {
   isPrompt: boolean;
   isVideo: boolean;
   aspectRatio: string;
-  setAspectRatio: (value: string) => void;
+  setAspectRatio: (value: AspectKey) => void;
   isWorking: boolean;
 }
 

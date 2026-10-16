@@ -1,6 +1,6 @@
 import type { FlowNode } from "../../../store/board";
 import { MediaPicker } from "../../MediaPicker";
-import { SourcePendingNotice } from "../SourcePendingNotice";
+import { SourcePendingNotice } from "./SourcePendingNotice";
 import type { RefSourceEntry } from "../types";
 import { mediaUrl } from "../../../canvas/canvasApi";
 

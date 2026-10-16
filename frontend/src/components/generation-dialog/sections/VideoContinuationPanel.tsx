@@ -1,5 +1,5 @@
 import type { VideoUpstreamInfo } from "../../../utils/videoFrame";
-import { SourcePendingNotice } from "../SourcePendingNotice";
+import { SourcePendingNotice } from "./SourcePendingNotice";
 import { MINI_SELECT_STYLE } from "../constants";
 import { mediaUrl } from "../../../canvas/canvasApi";
 
@@ -41,7 +41,7 @@ export function VideoContinuationPanel({
                               ? `Tham chiếu Video #${videoInfo.sourceNode?.data.shortId}`
                               : `Nối tiếp Video #${videoInfo.sourceNode?.data.shortId}`)}
                       </span>
-                      {isUpstreamVeoVideo && (
+                      {isUpstreamVeoVideo && !isOmniVideo && (
                         <select
                           className="source-select-mini"
                           value={videoExtendMode}
@@ -61,7 +61,7 @@ export function VideoContinuationPanel({
                           disabled={isWorking}
                           style={MINI_SELECT_STYLE}
                         >
-                          <option value="default">Nối tiếp (Frame cuối)</option>
+                          <option value="default">Nối tiếp video (Omni Flash)</option>
                           <option value="video_reference">Tham chiếu video này</option>
                         </select>
                       )}
@@ -69,8 +69,10 @@ export function VideoContinuationPanel({
                     <p className="source-info-box__desc">
                       {isExtend
                         ? "Kéo dài video trực tiếp bằng Veo Extension Lite (fZytfe). Giữ liền mạch bối cảnh và chuyển động của video gốc."
-                        : (isOmniVideo && omniVideoMode === "video_reference"
-                            ? "Sử dụng video của node trước làm video tham chiếu trực tiếp cho Omni Flash (jIps6)."
+                        : (isOmniVideo
+                            ? (omniVideoMode === "video_reference"
+                                ? "Sử dụng video của node trước làm video tham chiếu trực tiếp cho Omni Flash (jIps6)."
+                                : "Dùng video của node trước làm nguồn nối tiếp cho Omni Flash.")
                             : "Frame cuối cùng của video trước sẽ được tự động trích xuất làm điểm bắt đầu (start frame) cho video này.")}
                     </p>
                   </div>
@@ -93,7 +95,9 @@ export function VideoContinuationPanel({
                         ? "✓ Sẵn sàng extend video (Veo 3.1 Extension Lite)"
                         : (isOmniVideo && omniVideoMode === "video_reference"
                             ? "✓ Sẵn sàng tham chiếu video (Omni Flash jIps6)"
-                            : "✓ Sẵn sàng trích xuất frame cuối khi bấm Generate")}
+                            : (isOmniVideo
+                                ? "✓ Sẵn sàng nối tiếp bằng video này với Omni Flash"
+                                : "✓ Sẵn sàng trích xuất frame cuối khi bấm Generate"))}
                     </span>
                   </div>
                 )}

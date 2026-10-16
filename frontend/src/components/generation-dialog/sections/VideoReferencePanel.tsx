@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 import { MediaPicker } from "../../MediaPicker";
 import { mediaUrl } from "../../../canvas/canvasApi";
+import { MINI_SELECT_STYLE } from "../constants";
 
 interface VideoReferencePanelProps {
   omniVideoMode: "default" | "video_reference";

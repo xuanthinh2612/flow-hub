@@ -1,4 +1,4 @@
-import type { FlowNode } from "../../store/board";
+import type { FlowNode } from "../../../store/board";
 
 export function mediaNounFor(node: FlowNode): "ảnh" | "video" {
   return node.data.type === "video" ? "video" : "ảnh";

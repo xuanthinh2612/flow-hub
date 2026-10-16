@@ -2,6 +2,7 @@ import type { FlowNode, StoryboardGrid } from "../../store/board";
 import type { MediaItem } from "../../api/types";
 import type { ImageModelKey, MediaProviderKey, OmniFlashDuration, OmniFlashResolution, VideoModelFamily, VideoQuality } from "../../store/settings";
 import type { CountryKey, GenderKey, VibeKey } from "../../constants/character";
+import type { CameraKey } from "./constants";
 
 export type RefSourceEntry = {
   edgeId: string;

@@ -2,7 +2,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { FlowNode } from "../../../store/board";
 import type { VideoUpstreamInfo } from "../../../utils/videoFrame";
 import { MINI_SELECT_STYLE } from "../constants";
-import { SourcePendingNotice } from "../SourcePendingNotice";
+import { SourcePendingNotice } from "./SourcePendingNotice";
 import { mediaUrl } from "../../../canvas/canvasApi";
 
 interface ConnectedImageSourcesProps {

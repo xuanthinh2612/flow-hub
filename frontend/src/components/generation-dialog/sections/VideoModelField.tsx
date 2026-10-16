@@ -1,6 +1,6 @@
 import { VIDEO_MODEL_CHIPS } from "../constants";
 import type { VideoModelFamily, VideoQuality } from "../../../store/settings";
-import { InfoTip } from "../InfoTip";
+import { InfoTip } from "./InfoTip";
 
 interface VideoModelFieldProps {
   isVideo: boolean;

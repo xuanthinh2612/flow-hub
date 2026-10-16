@@ -64,6 +64,7 @@ export const VIDEO_MODEL_CHIPS: readonly VideoModelChip[] = [
 export type ImageAspectKey = (typeof IMAGE_ASPECT_RATIOS)[number]["key"];
 export type VideoAspectKey = (typeof VIDEO_ASPECT_RATIOS)[number]["key"];
 export type AspectKey = ImageAspectKey | VideoAspectKey;
+export const REF_SOURCE_TYPES = new Set(["character", "image", "visual_asset", "Storyboard", "video"]);
 
 // Map an upstream image aspect onto the closest video aspect. Square has
 // no direct video equivalent — fall back to portrait per the

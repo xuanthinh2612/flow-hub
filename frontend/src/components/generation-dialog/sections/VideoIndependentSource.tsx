@@ -1,4 +1,5 @@
-﻿import type { VideoUpstreamInfo } from "../../../utils/videoFrame";
+import type { RefObject } from "react";
+import type { VideoUpstreamInfo } from "../../../utils/videoFrame";
 import { MediaPicker } from "../../MediaPicker";
 import { MINI_SELECT_STYLE } from "../constants";
 import { VideoReferencePanel } from "./VideoReferencePanel";

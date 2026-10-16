@@ -1,5 +1,5 @@
 import { CHARACTER_GENDERS, CHARACTER_COUNTRIES, CHARACTER_VIBES, type GenderKey, type CountryKey, type VibeKey } from "../../../constants/character";
-import { InfoTip } from "../InfoTip";
+import { InfoTip } from "./InfoTip";
 
 interface CharacterBuilderProps {
   isCharacter: boolean;

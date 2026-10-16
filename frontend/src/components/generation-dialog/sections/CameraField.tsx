@@ -1,5 +1,5 @@
 import { CAMERA_MOVEMENTS, type CameraKey } from "../constants";
-import { InfoTip } from "../InfoTip";
+import { InfoTip } from "./InfoTip";
 
 interface CameraFieldProps {
   isVideo: boolean;

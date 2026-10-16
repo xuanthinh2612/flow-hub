@@ -1,5 +1,5 @@
 import type { Edge } from "@xyflow/react";
-import type { FlowNode } from "../../store/board";
+import type { FlowNode } from "../../../store/board";
 import { IMAGE_ASPECT_RATIOS, type AspectKey, type ImageAspectKey, type VideoAspectKey } from "../constants.ts";
 
 export function imageAspectToVideo(img: string | undefined): VideoAspectKey | null {

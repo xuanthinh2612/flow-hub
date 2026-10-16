@@ -164,8 +164,8 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
     connectedVideoMode,
     videoExtendMode,
     r2vAdditionalMediaIds,
-    omniVideoMode,
-    videoReferenceMediaId,
+    omniVideoMode = "default",
+    videoReferenceMediaId = null,
     backend: mediaProvider,
     videoModel: videoModelFamily,
     videoQuality,
@@ -174,7 +174,8 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
   } = form;
   const setPrompt = (value: string) => patch({ prompt: value });
   const setAspectRatio = (value: AspectKey) => patch({ aspectRatio: value });
-  const setVariants = (value: number) => patch({ variants: value });
+  const setVariants: Dispatch<SetStateAction<number>> = (value) =>
+    patch({ variants: typeof value === "function" ? value(variants) : value });
   const setCamera = (value: CameraKey) => patch({ camera: value });
   const setStoryboardGrid = (value: StoryboardGrid) => patch({ storyboardGrid: value });
   const setCharGender = (value: GenderKey | null) => patch({ charGender: value });
@@ -546,7 +547,7 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
       const camInstruction = cameraInstruction(camera);
       const videoPrompt = camInstruction ? `${finalPrompt}. ${camInstruction}` : finalPrompt;
       const result = buildVideoSubmit({
-        rfId, prompt: videoPrompt, aspectRatio, camera, variants, isOmniVideo, omniVideoMode,
+        prompt: videoPrompt, aspectRatio, camera, variants, isOmniVideo, omniVideoMode,
         videoReferenceMediaId, videoInfo, r2vAdditionalMediaIds, independentVideoMediaIds,
         independentVideoMode, hasPendingUpstream, isExtend, isEffectiveR2v, refSourceNodes,
         sourceMediaIds, selectedSourceIdx, actualConnectedMode, connectedVideoMode,

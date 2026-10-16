@@ -89,12 +89,10 @@ export function hydrateForm(snapshot: FormSnapshot): GenerationFormState {
   const nodeType = node?.data.type ?? "image";
   const savedGeneration = (node?.data.generation ?? {}) as NodeGeneration;
   const savedForm = savedGeneration as Partial<GenerationFormState>;
-  const storedModel = savedGeneration.model ?? {};
-
   const backend = savedForm.backend ?? defaults.mediaProvider;
-  const videoModel = storedModel.family;
-  const imageModel = storedModel.family === "image" ? storedModel.id : undefined;
-  const videoQuality = storedModel.quality;
+  const videoModel = savedGeneration.model?.family;
+  const imageModel = savedGeneration.model?.family === "image" ? savedGeneration.model.id : undefined;
+  const videoQuality = savedGeneration.model?.quality;
   const duration = savedGeneration.duration;
   const resolution = savedGeneration.resolution;
 
@@ -240,13 +238,15 @@ export function serializeForm(
           videoExtendMode: form.videoExtendMode,
           videoMode: isVideoRefActive
             ? "video_reference"
-            : hasAnyIncomingEdge
-              ? videoMode === "video_continuation" &&
+            : videoMode === "video_continuation"
+              ? form.videoModel === "veo" &&
                 videoSourceNodeFamily === "veo" &&
                 form.videoExtendMode === "extend"
                 ? "extend_video"
-                : form.connectedVideoMode
-              : form.independentVideoMode,
+                : "i2v"
+              : hasAnyIncomingEdge
+                ? form.connectedVideoMode
+                : form.independentVideoMode,
           videoReference: isVideoRefActive
             ? { sourceMediaId: form.videoReferenceMediaId }
             : undefined,

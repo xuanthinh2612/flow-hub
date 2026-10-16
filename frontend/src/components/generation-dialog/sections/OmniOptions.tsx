@@ -5,7 +5,7 @@ import {
   type OmniFlashDuration,
   type OmniFlashResolution,
 } from "../../../store/settings";
-import { InfoTip } from "../InfoTip";
+import { InfoTip } from "./InfoTip";
 
 interface OmniOptionsProps {
   isOmniVideo: boolean;

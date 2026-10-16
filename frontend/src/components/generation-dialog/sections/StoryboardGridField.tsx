@@ -1,6 +1,6 @@
 import { STORYBOARD_GRIDS, totalPanels } from "../../../lib/storyboardPrompt";
 import type { StoryboardGrid } from "../../../store/board";
-import { InfoTip } from "../InfoTip";
+import { InfoTip } from "./InfoTip";
 
 interface StoryboardGridFieldProps {
   isStoryboard: boolean;

@@ -1,6 +1,6 @@
 import type { MediaProviderKey } from "../../../store/settings";
 import { ENABLE_MUSE_BACKEND } from "../constants";
-import { InfoTip } from "../InfoTip";
+import { InfoTip } from "./InfoTip";
 
 interface BackendFieldProps {
   isPrompt: boolean;

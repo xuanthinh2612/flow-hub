@@ -1,4 +1,4 @@
-import type { FlowNode } from "../../store/board";
+import type { FlowNode } from "../../../store/board";
 import { pendingSourceMessage } from "../lib/pendingSource";
 
 export function SourcePendingNotice({ nodes }: { nodes: FlowNode[] }) {
