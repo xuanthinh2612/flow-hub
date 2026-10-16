@@ -9,7 +9,10 @@ import { AddNodePalette } from '../canvas/AddNodePalette';
 import { ResultViewer } from '../components/ResultViewer';
 import { useBoardStore } from '../store/board';
 import { activeNodeIds, useGenerationStore } from '../store/generation';
-import { getBoardByPublicId } from '../store/boardApi';
+import { getBoardByPublicId, patchBoard, type Board as CanvasBoard } from '../store/boardApi';
+import { api } from '../api/client';
+import type { WorkerInfo } from '../api/types';
+import { extensionLabel } from '../utils/format';
 
 export const CanvasVideoCreatePage: React.FC = () => {
   const { projectId: routeProjectId } = useParams();
@@ -19,6 +22,9 @@ export const CanvasVideoCreatePage: React.FC = () => {
   // been loaded. Refs keep this one-shot across renders and Strict Mode replay.
   const autoGenRequested = useRef(location.state?.autoGen === true);
   const autoRunStarted = useRef(false);
+  const [projectMeta, setProjectMeta] = React.useState<CanvasBoard | null>(null);
+  const [workers, setWorkers] = React.useState<WorkerInfo[]>([]);
+  const [updatingFlowProject, setUpdatingFlowProject] = React.useState(false);
   const loadInitialBoard = useBoardStore((s) => s.loadInitialBoard);
   const loading = useBoardStore((s) => s.loading);
   const boardId = useBoardStore((s) => s.boardId);
@@ -55,6 +61,7 @@ export const CanvasVideoCreatePage: React.FC = () => {
   // addNodeOfType call silently returns null.
   useEffect(() => {
     let active = true;
+    setProjectMeta(null);
     if (!routeProjectId) {
       navigate('/canvas', { replace: true });
       return () => { active = false; };
@@ -65,6 +72,7 @@ export const CanvasVideoCreatePage: React.FC = () => {
         navigate('/canvas', { replace: true });
         return;
       }
+      setProjectMeta(project);
       await loadInitialBoard(project.id);
       if (!active || !autoGenRequested.current || autoRunStarted.current) return;
 
@@ -82,6 +90,36 @@ export const CanvasVideoCreatePage: React.FC = () => {
     });
     return () => { active = false; };
   }, [loadInitialBoard, location.pathname, navigate, routeProjectId]);
+
+  useEffect(() => {
+    let active = true;
+    const refreshWorkers = () => api<WorkerInfo[]>('/api/workers').then((items) => {
+      if (active) setWorkers(items);
+    }).catch(() => {});
+    void refreshWorkers();
+    const timer = window.setInterval(refreshWorkers, 5000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+
+  const linkedWorker = workers.find((worker) => worker.id === projectMeta?.worker_id);
+  const currentFlowProject = linkedWorker?.flow?.projects?.find((project) => project.active);
+  const flowProjectMismatch = !!linkedWorker?.online
+    && !!currentFlowProject
+    && currentFlowProject.projectId !== projectMeta?.flow_project_id;
+
+  const updateFlowProject = async () => {
+    if (!projectMeta || !currentFlowProject) return;
+    setUpdatingFlowProject(true);
+    try {
+      const updated = await patchBoard(projectMeta.id, { flow_project_id: currentFlowProject.projectId });
+      setProjectMeta(updated);
+      useGenerationStore.setState({ projectId: null });
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không cập nhật được project Flow');
+    } finally {
+      setUpdatingFlowProject(false);
+    }
+  };
 
   return (
     <ReactFlowProvider>
@@ -115,6 +153,34 @@ export const CanvasVideoCreatePage: React.FC = () => {
             {boardPublicId && <Link className="btn btn-sm" to={`/library?workspace_id=${boardPublicId}`}>Thư viện project</Link>}
           </div>
         </header>
+        {projectMeta && !projectMeta.worker_id && (
+          <div role="status" style={{ padding: '8px 16px', color: '#cbd5e1', background: '#1e293b', borderBottom: '1px solid #475569' }}>
+            Project đang dùng extension mặc định; chọn extension cho project trong danh sách để theo dõi trạng thái offline và project Flow.
+          </div>
+        )}
+        {projectMeta?.worker_id && linkedWorker && !linkedWorker.online && (
+          <div role="status" style={{ padding: '10px 16px', color: '#fecaca', background: '#7f1d1d', borderBottom: '1px solid #ef4444' }}>
+            Extension {extensionLabel(linkedWorker.label, linkedWorker.credits).text} đang offline. Kết nối extension để kiểm tra project Flow.
+          </div>
+        )}
+        {projectMeta?.worker_id && linkedWorker?.online && !currentFlowProject && (
+          <div role="status" style={{ padding: '10px 16px', color: '#fde68a', background: '#78350f', borderBottom: '1px solid #f59e0b' }}>
+            Extension đang online nhưng chưa có tab Flow active. Mở project trên Flow để kiểm tra hoặc cập nhật liên kết.
+          </div>
+        )}
+        {projectMeta?.worker_id && flowProjectMismatch && currentFlowProject && (
+          <div role="status" style={{ padding: '10px 16px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, color: '#fde68a', background: '#78350f', borderBottom: '1px solid #f59e0b' }}>
+            <span>
+              {projectMeta.flow_project_id
+                ? `Project Flow không khớp: đã liên kết ${projectMeta.flow_project_id}, tab active hiện tại là ${currentFlowProject.title || currentFlowProject.projectId} (${currentFlowProject.projectId}).`
+                : `Project local chưa liên kết Flow; tab active hiện tại là ${currentFlowProject.title || currentFlowProject.projectId} (${currentFlowProject.projectId}).`}
+              {' '}Node tham chiếu media cũ có thể cần xử lý riêng.
+            </span>
+            <button type="button" className="btn btn-sm" disabled={updatingFlowProject} onClick={() => void updateFlowProject()}>
+              {updatingFlowProject ? 'Đang cập nhật…' : 'Cập nhật project Flow'}
+            </button>
+          </div>
+        )}
         <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
           {loading ? (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>

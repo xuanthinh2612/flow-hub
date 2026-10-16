@@ -74,12 +74,15 @@ class CanvasBoardCreate(BaseModel):
     name: str = "Untitled"
     project_id: str = "default"
     viewport: Optional[dict[str, float]] = None
+    worker_id: Optional[str] = None
+    flow_project_id: Optional[str] = None
 
 
 class CanvasBoardPatch(BaseModel):
     name: Optional[str] = None
     viewport: Optional[dict[str, float]] = None
     worker_id: Optional[str] = None
+    flow_project_id: Optional[str] = None
 
 
 class CanvasBoardImport(BaseModel):
@@ -118,7 +121,7 @@ def _canvas_node(row: dict) -> dict:
 
 @api.get("/boards", tags=["canvas"])
 async def list_canvas_boards(request: Request):
-    return core_of(request).db.all("""SELECT b.id, b.public_id, b.name, b.project_id, b.created_at, b.worker_id,
+    return core_of(request).db.all("""SELECT b.id, b.public_id, b.name, b.project_id, b.created_at, b.worker_id, b.flow_project_id,
         (SELECT COUNT(*) FROM canvas_nodes n WHERE n.board_id=b.id) AS node_count,
         (SELECT COUNT(*) FROM media m WHERE m.workspace_id=b.public_id AND m.kind='video') AS video_count,
         (SELECT COUNT(*) FROM media m WHERE m.workspace_id=b.public_id AND m.kind='image') AS image_count
@@ -129,21 +132,24 @@ async def list_canvas_boards(request: Request):
 async def create_canvas_board(body: CanvasBoardCreate, request: Request):
     core = core_of(request)
     db = core.db
+    if body.worker_id is not None and not db.one("SELECT id FROM workers WHERE id=?", (body.worker_id,)):
+        raise HTTPException(404, "Kh\u00f4ng t\u00ecm th\u1ea5y extension n\u00e0y")
     public_id = _new_project_id()
     board_id = db.insert("canvas_boards", {"name": body.name, "project_id": body.project_id,
                                              "public_id": public_id, "created_at": time.time(),
-                                             "viewport": body.viewport})
+                                             "viewport": body.viewport, "worker_id": body.worker_id,
+                                             "flow_project_id": body.flow_project_id})
     core.media.project_dir(public_id)
     if db.one("SELECT COUNT(*) AS n FROM canvas_boards")["n"] == 1:
         db.execute("UPDATE jobs SET workspace_id=? WHERE workspace_id IS NULL", (public_id,))
         db.execute("UPDATE media SET workspace_id=? WHERE workspace_id IS NULL", (public_id,))
-    return db.one("SELECT id, public_id, name, project_id, created_at, viewport, worker_id FROM canvas_boards WHERE id=?", (board_id,))
+    return db.one("SELECT id, public_id, name, project_id, created_at, viewport, worker_id, flow_project_id FROM canvas_boards WHERE id=?", (board_id,))
 
 
 @api.get("/boards/{board_id}", tags=["canvas"])
 async def get_canvas_board(board_id: int, request: Request):
     db = core_of(request).db
-    board = db.one("SELECT id, public_id, name, project_id, created_at, viewport, worker_id FROM canvas_boards WHERE id=?", (board_id,))
+    board = db.one("SELECT id, public_id, name, project_id, created_at, viewport, worker_id, flow_project_id FROM canvas_boards WHERE id=?", (board_id,))
     if not board:
         raise HTTPException(404, "không tìm thấy canvas")
     nodes = [_canvas_node(n) for n in db.all("SELECT * FROM canvas_nodes WHERE board_id=? ORDER BY id", (board_id,))]
@@ -200,13 +206,14 @@ async def rename_canvas_board(board_id: int, body: CanvasBoardPatch, request: Re
     db = core_of(request).db
     if not db.one("SELECT id FROM canvas_boards WHERE id=?", (board_id,)):
         raise HTTPException(404, "không tìm thấy canvas")
-    changes = {key: value for key, value in body.model_dump(exclude_unset=True).items() if value is not None}
+    changes = {key: value for key, value in body.model_dump(exclude_unset=True).items()
+               if value is not None or key == "flow_project_id"}
     if "worker_id" in body.model_fields_set:
         changes["worker_id"] = body.worker_id
         if body.worker_id is not None and not db.one("SELECT id FROM workers WHERE id=?", (body.worker_id,)):
             raise HTTPException(404, "Không tìm thấy client extension này")
     db.update("canvas_boards", "id", board_id, changes)
-    return db.one("SELECT id, public_id, name, project_id, created_at, viewport, worker_id FROM canvas_boards WHERE id=?", (board_id,))
+    return db.one("SELECT id, public_id, name, project_id, created_at, viewport, worker_id, flow_project_id FROM canvas_boards WHERE id=?", (board_id,))
 
 
 @api.delete("/boards/{board_id}", tags=["canvas"])
@@ -480,7 +487,7 @@ async def create_canvas_request(body: CanvasRequestCreate, request: Request):
     node = core.db.one("SELECT board_id FROM canvas_nodes WHERE id=?", (int(body.node_id),))
     if not node:
         raise HTTPException(404, "không tìm thấy node canvas")
-    project = core.db.one("SELECT public_id, worker_id FROM canvas_boards WHERE id=?", (node["board_id"],))
+    project = core.db.one("SELECT public_id, worker_id, flow_project_id FROM canvas_boards WHERE id=?", (node["board_id"],))
     _assert_canvas_extension_online(core, project["worker_id"])
     if body.workspace_id is not None and body.workspace_id != project["public_id"]:
         raise HTTPException(400, "node không thuộc project đang mở")
@@ -524,6 +531,8 @@ async def create_canvas_request(body: CanvasRequestCreate, request: Request):
         if not media or media["kind"] != "video" or media["workspace_id"] != project["public_id"]:
             raise HTTPException(400, "video nguồn không thuộc project Canvas hiện tại")
     spec = {**body.spec, "workspace_id": project["public_id"]}
+    if project.get("flow_project_id"):
+        spec["project_id"] = project["flow_project_id"]
     # Persist dependencies on connected upstream generations in the job spec.
     # The backend can then wait and inject their media even after a page reload.
     incoming = core.db.all(
@@ -700,7 +709,7 @@ async def resume_canvas_chain(board_id: int, node_id: int, body: dict[str, Any],
     """Retry a failed Canvas generation and its downstream jobs stopped by it."""
     core = core_of(request)
     db = core.db
-    board = db.one("SELECT public_id,worker_id FROM canvas_boards WHERE id=?", (board_id,))
+    board = db.one("SELECT public_id,worker_id,flow_project_id FROM canvas_boards WHERE id=?", (board_id,))
     if not board:
         raise HTTPException(404, "không tìm thấy canvas")
     node = db.one("SELECT id FROM canvas_nodes WHERE id=? AND board_id=?", (node_id, board_id))
@@ -811,6 +820,8 @@ async def resume_canvas_chain(board_id: int, node_id: int, body: dict[str, Any],
             raise HTTPException(409, f"job cũ của node #{row['node_id']} không còn tồn tại")
         spec = deepcopy(old_job.get("spec") or {})
         spec["workspace_id"] = board["public_id"]
+        if board.get("flow_project_id"):
+            spec["project_id"] = board["flow_project_id"]
         spec.pop("worker_id", None)
         if board["worker_id"]:
             spec["worker_id"] = board["worker_id"]
@@ -1077,7 +1088,7 @@ MAX_VIDEO_BYTES = 50 * 1024 * 1024
 async def upload(request: Request, file: UploadFile = File(...), project_id: Optional[str] = Form(None),
                  workspace_id: Optional[str] = Form(None)):
     core = core_of(request)
-    board = core.db.one("SELECT id, worker_id FROM canvas_boards WHERE public_id=?", (workspace_id,)) if workspace_id else None
+    board = core.db.one("SELECT id, worker_id, flow_project_id FROM canvas_boards WHERE public_id=?", (workspace_id,)) if workspace_id else None
     if board:
         _assert_canvas_extension_online(core, board["worker_id"])
     if workspace_id is not None and board is None:
@@ -1095,7 +1106,8 @@ async def upload(request: Request, file: UploadFile = File(...), project_id: Opt
     if not data or len(data) > limit:
         raise HTTPException(413, f"tệp rỗng hoặc quá {limit // (1024 * 1024)} MB")
     spec = {"type": "upload", "file_name": file.filename or default_name, "mime_type": mime, "size": len(data),
-            "project_id": project_id, "workspace_id": workspace_id}
+            "project_id": (board.get("flow_project_id") if board and board.get("flow_project_id") else project_id),
+            "workspace_id": workspace_id}
     if board and board["worker_id"]:
         spec["worker_id"] = board["worker_id"]
     return core.jobs.create(spec, secret={"b64": base64.b64encode(data).decode("ascii")})

@@ -16,6 +16,10 @@ export const CanvasProjectsPage: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('Project mới');
+  const [newWorkerId, setNewWorkerId] = useState('');
+  const [newFlowProjectId, setNewFlowProjectId] = useState('');
   const [exporting, setExporting] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
   const [workers, setWorkers] = useState<WorkerInfo[]>([]);
@@ -58,12 +62,20 @@ export const CanvasProjectsPage: React.FC = () => {
     }
   };
 
-  const createProject = async () => {
-    const name = window.prompt('Tên project video', 'Project mới');
-    if (name === null) return;
+  const createProject = () => {
+    const defaultWorker = workers.find((worker) => worker.online);
+    const activeProject = defaultWorker?.flow?.projects?.find((project) => project.active);
+    setNewProjectName('Project mới');
+    setNewWorkerId('');
+    setNewFlowProjectId(activeProject?.projectId || '');
+    setCreateDialogOpen(true);
+  };
+
+  const submitCreateProject = async () => {
     setCreating(true);
     try {
-      const project = await createBoard(name.trim() || 'Project mới');
+      const project = await createBoard(newProjectName.trim() || 'Project mới', newWorkerId || null, newFlowProjectId || null);
+      setCreateDialogOpen(false);
       navigate(`/canvas/${project.public_id}`);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Không tạo được project', 'err');
@@ -114,6 +126,15 @@ export const CanvasProjectsPage: React.FC = () => {
       toast('Không thể sao chép ID project', 'err');
     }
   };
+
+  const onlineWorkers = workers.filter((worker) => worker.online);
+  const availableFlowProjects = Array.from(new Map(
+    onlineWorkers
+      .filter((worker) => !newWorkerId || worker.id === newWorkerId)
+      .flatMap((worker) => (worker.flow?.projects || [])
+        .filter((project) => project.active)
+        .map((project) => [project.projectId, project] as const)),
+  ).values());
 
   const exportProject = async (project: Project) => {
     setExporting(project.id);
@@ -174,6 +195,39 @@ export const CanvasProjectsPage: React.FC = () => {
         onChange={(event) => void handleImportFile(event)}
       />
 
+      {createDialogOpen && (
+        <div role="presentation" style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', background: '#0009', padding: 20 }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="create-project-title" style={{ width: 'min(460px, 100%)', display: 'grid', gap: 14, padding: 22, border: '1px solid #475569', borderRadius: 14, background: '#111827' }}>
+            <h2 id="create-project-title" style={{ margin: 0 }}>Tạo project local</h2>
+            <label style={{ display: 'grid', gap: 6 }}>Tên project
+              <input className="input" value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} autoFocus />
+            </label>
+            <label style={{ display: 'grid', gap: 6 }}>Extension ưu tiên
+              <select className="input" value={newWorkerId} onChange={(event) => {
+                const workerId = event.target.value;
+                setNewWorkerId(workerId);
+                const worker = onlineWorkers.find((item) => item.id === workerId);
+                setNewFlowProjectId(worker?.flow?.projects?.find((project) => project.active)?.projectId || '');
+              }}>
+                <option value="">Mặc định — tự chọn extension</option>
+                {onlineWorkers.map((worker) => <option key={worker.id} value={worker.id}>{extensionLabel(worker.label, worker.credits).text} · {worker.id.slice(0, 8)}</option>)}
+              </select>
+            </label>
+            <label style={{ display: 'grid', gap: 6 }}>Project Flow đang active
+              <select className="input" value={newFlowProjectId} onChange={(event) => setNewFlowProjectId(event.target.value)}>
+                <option value="">Chưa liên kết</option>
+                {availableFlowProjects.map((project) => <option key={project.projectId} value={project.projectId}>{project.title || project.projectId} · {project.projectId}</option>)}
+              </select>
+            </label>
+            {!availableFlowProjects.length && <p className="muted" style={{ margin: 0 }}>Chưa thấy tab Flow active. Mở Flow và chọn project trước khi tạo project local.</p>}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button type="button" className="btn" onClick={() => setCreateDialogOpen(false)} disabled={creating}>Hủy</button>
+              <button type="button" className="btn btn-primary" onClick={() => void submitCreateProject()} disabled={creating || !newFlowProjectId}>{creating ? 'Đang tạo…' : 'Tạo project'}</button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {loading ? <p className="empty">Đang tải project…</p> : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 16 }}>
           {!projects.length && (
@@ -216,7 +270,12 @@ export const CanvasProjectsPage: React.FC = () => {
                   title="Các project có thể dùng chung một extension."
                 >
                   <option value="">Mặc định — tự chọn extension</option>
-                  {workers.map((worker) => (
+                  {project.worker_id && workers.find((worker) => worker.id === project.worker_id && !worker.online) && (
+                    <option value={project.worker_id} disabled>
+                      {extensionLabel(workers.find((worker) => worker.id === project.worker_id)!.label, null).text} · offline · {project.worker_id.slice(0, 8)}
+                    </option>
+                  )}
+                  {onlineWorkers.map((worker) => (
                     <option key={worker.id} value={worker.id}>
                       {extensionLabel(worker.label, worker.credits).text} ·{' '}
                       {worker.online ? 'online' : 'offline'} · {worker.id.slice(0, 8)}

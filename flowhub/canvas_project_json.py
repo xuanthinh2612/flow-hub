@@ -15,7 +15,7 @@ class CanvasProjectExportError(Exception):
 
 async def build_canvas_project_snapshot(core: Any, board_id: int) -> dict:
     board = core.db.one(
-        "SELECT id, public_id, name, project_id, created_at, viewport, worker_id FROM canvas_boards WHERE id=?",
+        "SELECT id, public_id, name, project_id, created_at, viewport, worker_id, flow_project_id FROM canvas_boards WHERE id=?",
         (board_id,),
     )
     if not board:

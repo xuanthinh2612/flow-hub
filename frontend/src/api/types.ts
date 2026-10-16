@@ -1,5 +1,7 @@
 export interface WorkerFlowProject {
   projectId: string;
+  title?: string;
+  active?: boolean;
 }
 
 export interface WorkerFlow {

@@ -178,6 +178,7 @@ setInterval(pushStatus, 20000);
 chrome.tabs.onUpdated.addListener((tabId, info) => {
   if (info.url?.startsWith(FLOW_URL)) pushStatus().catch(() => {});
 });
+chrome.tabs.onActivated.addListener(() => { pushStatus().catch(() => {}); });
 chrome.tabs.onRemoved.addListener(() => { pushStatus().catch(() => {}); });
 
 async function handle(msg) {
@@ -518,8 +519,14 @@ async function flowStatus() {
   const projects = [];
   for (const t of tabs) {
     const m = UUID_RE.exec(t.url || '');
-    if (m && !projects.some((p) => p.projectId === m[0])) {
-      projects.push({ projectId: m[0], title: t.title || '', active: !!t.active });
+    if (m) {
+      const existing = projects.find((p) => p.projectId === m[0]);
+      if (!existing) {
+        projects.push({ projectId: m[0], title: t.title || '', active: !!t.active });
+      } else if (t.active) {
+        existing.title = t.title || existing.title;
+        existing.active = true;
+      }
     }
   }
   projects.sort((a, b) => Number(b.active) - Number(a.active));

@@ -12,6 +12,7 @@ export interface Board {
   project_id: string;
   created_at: number;
   worker_id?: string | null;
+  flow_project_id?: string | null;
   viewport?: { x: number; y: number; zoom: number } | null;
 }
 
@@ -42,8 +43,10 @@ export async function listBoards(): Promise<Board[]> {
   return api<Board[]>("/api/boards");
 }
 
-export async function createBoard(name: string): Promise<Board> {
-  return api<Board>("/api/boards", { method: "POST", body: { name, project_id: "default" } });
+export async function createBoard(name: string, workerId?: string | null, flowProjectId?: string | null): Promise<Board> {
+  return api<Board>("/api/boards", { method: "POST", body: {
+    name, project_id: "default", worker_id: workerId || null, flow_project_id: flowProjectId || null,
+  } });
 }
 
 export async function getBoardByPublicId(publicId: string): Promise<Board | null> {
@@ -59,7 +62,7 @@ export async function getBoard(id: number): Promise<{
   return api<{ board: Board; nodes: StoredNode[]; edges: StoredEdge[] }>(`/api/boards/${id}`);
 }
 
-export async function patchBoard(id: number, patch: { name?: string; viewport?: { x: number; y: number; zoom: number }; worker_id?: string | null }): Promise<Board> {
+export async function patchBoard(id: number, patch: { name?: string; viewport?: { x: number; y: number; zoom: number }; worker_id?: string | null; flow_project_id?: string | null }): Promise<Board> {
   return api<Board>(`/api/boards/${id}`, { method: "PATCH", body: patch });
 }
 
@@ -111,8 +114,15 @@ export async function deleteEdge(id: number): Promise<void> {
 
 // ── Project / request integration ──────────────────────────────────────
 
-export async function ensureBoardProject(_boardId?: number): Promise<{ flow_project_id: string }> {
-  return { flow_project_id: "default" };
+export async function ensureBoardProject(boardId?: number): Promise<{ flow_project_id: string }> {
+  if (boardId === undefined) return { flow_project_id: "default" };
+  const board = await getBoardById(boardId);
+  return { flow_project_id: board.flow_project_id || "default" };
+}
+
+async function getBoardById(id: number): Promise<Board> {
+  const detail = await api<{ board: Board }>(`/api/boards/${id}`);
+  return detail.board;
 }
 
 export async function createRequest(input: {
