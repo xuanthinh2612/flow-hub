@@ -7,7 +7,7 @@ import { MediaModalContent } from '../components/MediaModal';
 import { useModal } from '../context/ModalContext';
 import { useToast } from '../context/ToastContext';
 import { useFlowEvents } from '../api/events';
-import { useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
 interface FilterOption {
   label: string;
@@ -27,20 +27,33 @@ const FILTERS: FilterOption[] = [
 export const LibraryPage: React.FC = () => {
   const [mediaList, setMediaList] = useState<MediaItem[]>([]);
   const [activeFilterIndex, setActiveFilterIndex] = useState<number>(0);
-  const [idInput, setIdInput] = useState('');
-  const [loading, setLoading] = useState(true);
-  const location = useLocation();
-  const workspaceId = (() => {
-    const fromUrl = new URLSearchParams(location.search).get('workspace_id');
+  const [projects, setProjects] = useState<Array<{ public_id: string; name: string }>>([]);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('workspace_id');
     if (fromUrl) return fromUrl;
     try {
-      return localStorage.getItem('flowboard.activeProjectId');
-    } catch { return null; }
-  })();
+      return localStorage.getItem('flowboard.activeProjectId') || 'all';
+    } catch { return 'all'; }
+  });
+  const [idInput, setIdInput] = useState('');
+  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+  const workspaceId = selectedWorkspaceId === 'all' ? null : selectedWorkspaceId;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { openModal } = useModal();
   const { toast } = useToast();
+
+  useEffect(() => {
+    api<Array<{ public_id: string; name: string }>>('/api/boards')
+      .then(setProjects)
+      .catch(() => setProjects([]));
+  }, []);
+
+  const handleProjectChange = (projectId: string) => {
+    setSelectedWorkspaceId(projectId);
+    navigate(`/library?workspace_id=${encodeURIComponent(projectId)}`, { replace: true });
+  };
 
   const load = useCallback(async () => {
     const f = FILTERS[activeFilterIndex];
@@ -125,8 +138,7 @@ export const LibraryPage: React.FC = () => {
         <div>
           <h1>Thư viện</h1>
           <p>
-            {workspaceId === null ? 'Mọi ảnh / video chưa gắn với một canvas project.' : 'Ảnh và video trong project hiện tại. Bấm vào để xem, tải, upscale hoặc dùng'}
-            {workspaceId !== null && ' làm tham chiếu.'}
+            {workspaceId === null ? 'Ảnh và video của tất cả project, bao gồm media chưa gắn với project.' : 'Ảnh và video của project đang chọn. Bấm vào media để xem, tải, upscale hoặc dùng làm tham chiếu.'}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -171,6 +183,22 @@ export const LibraryPage: React.FC = () => {
       </div>
 
       <div style={{ height: '12px' }} />
+
+      <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <span className="muted">Project</span>
+        <select
+          className="input"
+          aria-label="Chọn project trong thư viện"
+          value={selectedWorkspaceId}
+          onChange={(event) => handleProjectChange(event.target.value)}
+          style={{ width: 'auto', minWidth: 220 }}
+        >
+          <option value="all">Tất cả project</option>
+          {projects.map((project) => (
+            <option key={project.public_id} value={project.public_id}>{project.name}</option>
+          ))}
+        </select>
+      </label>
 
       <div className="seg">
         {FILTERS.map((f, i) => (
