@@ -3113,11 +3113,19 @@ button:disabled {
   border-radius: 12px;
   width: 640px;
   max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 16px;
   position: relative;
+}
+
+.gen-dialog > * {
+  flex-shrink: 0;
 }
 
 .gen-dialog__header {
