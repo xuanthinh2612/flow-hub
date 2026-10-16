@@ -1439,7 +1439,9 @@ export function NodeCard(props: NodeProps<FlowNode>) {
         <span className="node-title">{data.title}</span>
         {videoInfo && (() => {
           let displayMode: string = videoInfo.mode;
-          if (data.generation?.videoMode === "video_reference") {
+          if (videoInfo.mode === "r2v") {
+            displayMode = "r2v";
+          } else if (data.generation?.videoMode === "video_reference") {
             displayMode = "video_reference";
           } else if (videoInfo.mode === "t2v") {
             const independentMediaIds = data.generation?.independentVideoMediaIds as string[] | undefined;

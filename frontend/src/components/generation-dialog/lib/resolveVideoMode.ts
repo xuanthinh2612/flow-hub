@@ -75,7 +75,9 @@ export function resolveVideoMode(input: ResolveVideoModeInput): ResolvedVideoMod
     videoExtendMode === "extend";
 
   let videoUiKey: VideoUiKey;
-  if (isOmniVideo && omniVideoMode === "video_reference") {
+  if (isEffectiveR2v || videoInfo?.mode === "r2v") {
+    videoUiKey = "connected";
+  } else if (isOmniVideo && omniVideoMode === "video_reference") {
     videoUiKey = "video_reference";
   } else if (videoInfo?.mode === "t2v") {
     videoUiKey =
@@ -86,15 +88,13 @@ export function resolveVideoMode(input: ResolveVideoModeInput): ResolvedVideoMod
           : independentVideoEffectiveMode === "r2v"
             ? "independent_r2v"
             : "video_reference";
-  } else if (isEffectiveR2v) {
-    videoUiKey = "connected";
   } else if (videoInfo?.mode === "video_continuation") {
     videoUiKey = isExtend
       ? "continuation_extend"
       : isOmniVideo
         ? "continuation_omni"
         : "continuation_lastframe";
-  } else if (videoInfo?.mode === "i2v" || videoInfo?.mode === "r2v") {
+  } else if (videoInfo?.mode === "i2v" || videoInfo?.mode === "extend_video") {
     videoUiKey = "connected";
   } else {
     videoUiKey = "independent_i2v";
@@ -147,7 +147,7 @@ export function canSubmitVideo(input: CanSubmitVideoInput): boolean {
 
   return (
     !isVideo ||
-    (isOmniVideo && omniVideoMode === "video_reference"
+    (!isEffectiveR2v && isOmniVideo && omniVideoMode === "video_reference"
       ? (Boolean(videoReferenceMediaId) ||
           (videoInfo?.mode === "video_continuation" &&
             (Boolean(videoInfo.sourceMediaId) || hasPendingUpstream))) &&

@@ -301,17 +301,17 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
     videoUiKey,
   } = resolvedVideoMode;
   const connectedVideoAction: ConnectedVideoAction | null =
-    videoInfo?.mode === "video_continuation"
-      ? omniVideoMode === "video_reference"
-        ? "video_reference"
-        : isEffectiveR2v
-          ? "r2v"
+    isEffectiveR2v || videoInfo?.mode === "r2v"
+      ? "r2v"
+      : videoInfo?.mode === "video_continuation"
+        ? omniVideoMode === "video_reference"
+          ? "video_reference"
           : isExtend
             ? "extend"
             : "continuation"
-      : isVideo && isOmniVideo && omniVideoMode === "video_reference"
-        ? "video_reference"
-        : null;
+        : isVideo && isOmniVideo && omniVideoMode === "video_reference"
+          ? "video_reference"
+          : null;
   useEffect(() => {
     if (connectedVideoAction === "video_reference") {
       if (videoModelFamily !== "omni_flash") setVideoModel("omni_flash");

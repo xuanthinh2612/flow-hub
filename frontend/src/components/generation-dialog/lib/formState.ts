@@ -127,11 +127,19 @@ export function hydrateForm(snapshot: FormSnapshot): GenerationFormState {
   const videoInfo = nodeType === "video"
     ? getVideoUpstreamInfo(rfId, nodes, edges)
     : null;
-  const isSavedVideoReference = savedGeneration.videoMode === "video_reference"
-    || savedForm.omniVideoMode === "video_reference";
-  const videoModel = isSavedVideoReference ? "omni_flash" : storedVideoModelFamily;
-  const connectedVideoMode = savedForm.connectedVideoMode
-    ?? (savedGeneration.videoMode === "r2v" ? "r2v" : "i2v");
+  const isMultiSource = videoInfo?.mode === "r2v" || (videoInfo?.upstreamNodes?.length ?? 0) >= 2;
+  const isSavedVideoReference = !isMultiSource && (
+    savedGeneration.videoMode === "video_reference"
+    || savedForm.omniVideoMode === "video_reference"
+  );
+  const videoModel = isSavedVideoReference
+    ? "omni_flash"
+    : (isMultiSource && (savedGeneration.videoMode === "video_reference" || savedForm.omniVideoMode === "video_reference")
+      ? defaults.videoModel
+      : storedVideoModelFamily);
+  const connectedVideoMode = isMultiSource
+    ? "r2v"
+    : (savedForm.connectedVideoMode ?? (savedGeneration.videoMode === "r2v" ? "r2v" : "i2v"));
   const videoQuality: VideoQuality = savedGeneration.model?.quality === "fast" || savedGeneration.model?.quality === "lite" ||
     savedGeneration.model?.quality === "quality" || savedGeneration.model?.quality === "lite_relaxed" ||
     savedGeneration.model?.quality === "fast_ultra" || savedGeneration.model?.quality === "lite_low_priority"
@@ -208,7 +216,7 @@ export function serializeForm(
     hasAnyIncomingEdge,
     currentGeneration,
   } = context;
-  const isVideoRefActive = isVideo && form.videoModel === "omni_flash" &&
+  const isVideoRefActive = isVideo && videoMode !== "r2v" && form.videoModel === "omni_flash" &&
     form.omniVideoMode === "video_reference";
   const videoModel = form.videoModel === "omni_flash"
     ? {
@@ -241,19 +249,21 @@ export function serializeForm(
           t2vLibraryMediaItem: form.t2vLibraryMediaItem,
           independentVideoMediaIds: form.independentVideoMediaIds,
           independentVideoMode: form.independentVideoMode,
-          connectedVideoMode: form.connectedVideoMode,
+          connectedVideoMode: videoMode === "r2v" ? "r2v" : form.connectedVideoMode,
           videoExtendMode: form.videoExtendMode,
           videoMode: isVideoRefActive
             ? "video_reference"
-            : videoMode === "video_continuation"
-              ? form.connectedVideoMode === "r2v"
-                ? "r2v"
-                : form.videoExtendMode === "extend" && videoSourceNodeFamily === "veo"
-                  ? "extend_video"
-                  : "i2v"
-              : hasAnyIncomingEdge
-                ? form.connectedVideoMode
-                : form.independentVideoMode,
+            : videoMode === "r2v"
+              ? "r2v"
+              : videoMode === "video_continuation"
+                ? form.connectedVideoMode === "r2v"
+                  ? "r2v"
+                  : form.videoExtendMode === "extend" && videoSourceNodeFamily === "veo"
+                    ? "extend_video"
+                    : "i2v"
+                : hasAnyIncomingEdge
+                  ? form.connectedVideoMode
+                  : form.independentVideoMode,
           videoReference: isVideoRefActive
             ? { sourceMediaId: form.videoReferenceMediaId }
             : undefined,

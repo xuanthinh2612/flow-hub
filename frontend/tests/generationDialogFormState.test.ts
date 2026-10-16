@@ -184,3 +184,44 @@ test("serializeForm sets abra_t2v model ID for t2v mode and abra_r2v for r2v mod
   assert.deepEqual(r2vSerialized.model, { family: "omni_flash", id: "abra_r2v_8s_360p" });
 });
 
+test("hydrateForm does not lock to video_reference when multiple sources are connected", () => {
+  const targetVideo = node("target", "video", {
+    videoMode: "video_reference",
+    model: { family: "omni_flash", id: "abra_edit" },
+  });
+  const sourceVideo = node("source-vid", "video", {}, ["vid-1"]);
+  const sourceImage = node("source-img", "image", {}, ["img-1"]);
+
+  const hydrated = hydrateForm({
+    rfId: "target",
+    nodes: [targetVideo, sourceVideo, sourceImage],
+    edges: [
+      { id: "e1", source: "source-vid", target: "target" },
+      { id: "e2", source: "source-img", target: "target" },
+    ],
+    defaults,
+    seedPrompt: "test",
+    boardPublicId: "board-1",
+  });
+
+  assert.equal(hydrated.omniVideoMode, "default");
+  assert.equal(hydrated.connectedVideoMode, "r2v");
+  // Does not force videoModel to omni_flash if user default is veo
+  assert.equal(hydrated.videoModel, "veo");
+
+  const r2vSerialized = serializeForm({ ...form(), videoModel: "omni_flash", omniVideoMode: "video_reference" as const }, {
+    targetType: "video",
+    isVideo: true,
+    isCharacter: false,
+    isStoryboard: false,
+    videoMode: "r2v",
+    videoSourceNodeFamily: undefined,
+    hasAnyIncomingEdge: true,
+    currentGeneration: {},
+  });
+  // Must serialize as abra_r2v instead of abra_edit even if omniVideoMode was set
+  assert.equal((r2vSerialized.model as { id: string })?.id, "abra_r2v_8s");
+  assert.equal(r2vSerialized.videoMode, "r2v");
+});
+
+

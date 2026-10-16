@@ -59,7 +59,7 @@ export function buildVideoSubmit(ctx: BuildVideoSubmitContext): VideoSubmitResul
   } = ctx;
 
   // 0. Video Reference (Omni Flash abra_edit - jIps6)
-  if (isOmniVideo && omniVideoMode === "video_reference") {
+  if (!isEffectiveR2v && videoInfo?.mode !== "r2v" && isOmniVideo && omniVideoMode === "video_reference") {
     const refMid = videoReferenceMediaId || (videoInfo?.mode === "video_continuation" ? videoInfo.sourceMediaId : null);
     if (!refMid) return { ok: false, nodeError: "Vui lòng chọn hoặc tải lên video tham chiếu." };
     return {
