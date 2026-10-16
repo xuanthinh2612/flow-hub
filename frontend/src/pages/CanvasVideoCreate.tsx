@@ -102,7 +102,11 @@ export const CanvasVideoCreatePage: React.FC = () => {
   }, []);
 
   const linkedWorker = workers.find((worker) => worker.id === projectMeta?.worker_id);
+  const linkedWorkerDisplay = linkedWorker
+    ? extensionLabel(linkedWorker.label, linkedWorker.credits)
+    : null;
   const currentFlowProject = linkedWorker?.flow?.projects?.find((project) => project.active);
+  const hasFlowProjects = (linkedWorker?.flow?.projects?.length ?? 0) > 0;
   const flowProjectMismatch = !!linkedWorker?.online
     && !!currentFlowProject
     && currentFlowProject.projectId !== projectMeta?.flow_project_id;
@@ -127,6 +131,18 @@ export const CanvasVideoCreatePage: React.FC = () => {
         <header className="page-header" style={{ flexShrink: 0, padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
           <Link className="btn btn-sm" to="/canvas">← Dự án</Link>
           <h2 style={{ margin: 0, fontSize: '15px' }}>{boardName || 'Canvas video'}</h2>
+          {projectMeta?.worker_id && linkedWorker && linkedWorkerDisplay && (
+            <span
+              className={`pill ${linkedWorker.online ? 'ok' : 'err'}`}
+              title={linkedWorkerDisplay.title || `Extension ${linkedWorker.id}`}
+              style={{ fontSize: '12px' }}
+            >
+              {linkedWorkerDisplay.text}
+              {typeof linkedWorker.credits?.value !== 'number' ? ' · ch\u01b0a c\u00f3 s\u1ed1 d\u01b0' : ''}
+              {linkedWorkerDisplay.stale ? ' · stale' : ''}
+              {!linkedWorker.online ? ' · offline' : ''}
+            </span>
+          )}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
             {boardId !== null && (
               <>
@@ -163,9 +179,13 @@ export const CanvasVideoCreatePage: React.FC = () => {
             Extension {extensionLabel(linkedWorker.label, linkedWorker.credits).text} đang offline. Kết nối extension để kiểm tra project Flow.
           </div>
         )}
-        {projectMeta?.worker_id && linkedWorker?.online && !currentFlowProject && (
+        {projectMeta?.worker_id && linkedWorker?.online && !currentFlowProject
+          && (!projectMeta.flow_project_id || !hasFlowProjects) && (
           <div role="status" style={{ padding: '10px 16px', color: '#fde68a', background: '#78350f', borderBottom: '1px solid #f59e0b' }}>
-            Extension đang online nhưng chưa có tab Flow active. Mở project trên Flow để kiểm tra hoặc cập nhật liên kết.
+            {!hasFlowProjects
+              ? 'Extension \u0111ang online nh\u01b0ng ch\u01b0a m\u1edf project n\u00e0o tr\u00ean Flow. M\u1edf project Flow \u0111\u1ec3 ti\u1ebfp t\u1ee5c t\u1ea1o video.'
+              : 'Extension \u0111ang online nh\u01b0ng ch\u01b0a c\u00f3 tab Flow active. M\u1edf project Flow \u0111\u1ec3 ch\u1ecdn project li\u00ean k\u1ebft.'
+            }
           </div>
         )}
         {projectMeta?.worker_id && flowProjectMismatch && currentFlowProject && (
