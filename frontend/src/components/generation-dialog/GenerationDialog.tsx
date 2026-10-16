@@ -24,7 +24,7 @@ import {
   type VibeKey,
 } from "../../constants/character";
 import { REF_SOURCE_TYPES, type CameraKey, type AspectKey } from "./constants";
-import { reducer, type RefSourceEntry } from "./types";
+import { reducer, type ConnectedVideoAction, type RefSourceEntry } from "./types";
 import { hydrateForm, serializeForm } from "./lib/formState";
 import { cameraInstruction } from "./lib/cameraInstruction";
 import { canSubmitVideo, computeCanGenerate, resolveVideoMode } from "./lib/resolveVideoMode";
@@ -201,6 +201,18 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
   const isCharacter = targetType === "character";
   const isStoryboard = targetType === "Storyboard";
 
+  const handleConnectedVideoActionChange = (action: ConnectedVideoAction) => {
+    setConnectedVideoMode(action === "r2v" ? "r2v" : "i2v");
+    setVideoExtendMode(action === "extend" ? "extend" : "continuation");
+    setOmniVideoMode(action === "video_reference" ? "video_reference" : "default");
+
+    if (action === "video_reference") {
+      setVideoModel("omni_flash");
+    } else if (action === "extend") {
+      setVideoModel("veo");
+    }
+  };
+
   const persistIndependentVideoSelection = (
     mediaIds: string[],
     mode: "i2v" | "r2v" = independentVideoMode,
@@ -288,6 +300,36 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
     isExtend,
     videoUiKey,
   } = resolvedVideoMode;
+  const connectedVideoAction: ConnectedVideoAction | null =
+    videoInfo?.mode === "video_continuation"
+      ? omniVideoMode === "video_reference"
+        ? "video_reference"
+        : isEffectiveR2v
+          ? "r2v"
+          : isExtend
+            ? "extend"
+            : "continuation"
+      : isVideo && isOmniVideo && omniVideoMode === "video_reference"
+        ? "video_reference"
+        : null;
+  useEffect(() => {
+    if (connectedVideoAction === "video_reference") {
+      if (videoModelFamily !== "omni_flash") setVideoModel("omni_flash");
+      return;
+    }
+    if (connectedVideoAction === "extend") {
+      if (videoModelFamily !== "veo") setVideoModel("veo");
+      return;
+    }
+    if (videoModelFamily === "veo") {
+      const isUltraQuality = videoQuality === "lite_relaxed"
+        || videoQuality === "fast_ultra"
+        || videoQuality === "lite_low_priority";
+      if (isUltraQuality && paygateTier !== "PAYGATE_TIER_TWO") {
+        setVideoQuality("fast");
+      }
+    }
+  }, [connectedVideoAction, paygateTier, videoModelFamily, videoQuality]);
   const independentVideoModeLabel =
     independentVideoEffectiveMode === "video_reference"
       ? "Video Reference (jIps6)"
@@ -717,13 +759,12 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
         <VideoConnectedSource
           isVideo={isVideo}
           videoInfo={videoInfo}
+          action={connectedVideoAction}
+          onActionChange={handleConnectedVideoActionChange}
           isExtend={isExtend}
           isOmniVideo={isOmniVideo}
           omniVideoMode={omniVideoMode}
-          setOmniVideoMode={setOmniVideoMode}
           isUpstreamVeoVideo={isUpstreamVeoVideo}
-          videoExtendMode={videoExtendMode}
-          setVideoExtendMode={setVideoExtendMode}
           isWorking={isWorking}
           totalConnectedSources={totalConnectedSources}
           connectedVideoMode={connectedVideoMode}
@@ -756,7 +797,7 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
 
         <VideoModelField
           isVideo={isVideo}
-          isExtend={isExtend}
+          connectedVideoAction={connectedVideoAction}
           videoModelFamily={videoModelFamily}
           videoQuality={videoQuality}
           setVideoModel={setVideoModel}

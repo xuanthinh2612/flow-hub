@@ -61,6 +61,9 @@ export const VIDEO_MODEL_CHIPS: readonly VideoModelChip[] = [
   { kind: "omni", label: "Omni Flash" },
 ];
 
+export const CONNECTED_CONTINUATION_MODELS: readonly VideoModelChip[] = VIDEO_MODEL_CHIPS;
+export const CONNECTED_R2V_MODELS: readonly VideoModelChip[] = VIDEO_MODEL_CHIPS;
+
 export type ImageAspectKey = (typeof IMAGE_ASPECT_RATIOS)[number]["key"];
 export type VideoAspectKey = (typeof VIDEO_ASPECT_RATIOS)[number]["key"];
 export type AspectKey = ImageAspectKey | VideoAspectKey;

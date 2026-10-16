@@ -1102,10 +1102,14 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
             : collectUpstreamVideoGenerationSources(rfId);
           const ingredients = opts.sourceMediaIds?.length
             ? opts.sourceMediaIds
-            : upstreamSources.filter((source) => !source.isVideo).map((source) => source.mediaId);
+            : opts.sourceMediaId
+              ? [opts.sourceMediaId]
+              : upstreamSources.filter((source) => !source.isVideo).map((source) => source.mediaId);
           const videoIngredients = opts.sourceVideoIds?.length
             ? opts.sourceVideoIds
-            : upstreamSources.filter((source) => source.isVideo).map((source) => source.mediaId);
+            : opts.sourceVideoId
+              ? [opts.sourceVideoId]
+              : upstreamSources.filter((source) => source.isVideo).map((source) => source.mediaId);
             
           if (ingredients.length === 0 && videoIngredients.length === 0 && !hasPendingUpstreamGeneration(rfId)) {
             const error = "no ingredients";

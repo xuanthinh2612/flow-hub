@@ -41,6 +41,7 @@ const uiCases: Array<[VideoUiKey, Partial<ResolveVideoModeInput>]> = [
   ["independent_i2v", { independentVideoMediaIds: ["image"] }],
   ["independent_r2v", { independentVideoMediaIds: ["a", "b"] }],
   ["continuation_extend", { videoInfo: video("video_continuation", "veo"), videoExtendMode: "extend" }],
+  ["continuation_lastframe", { videoInfo: video("video_continuation", "omni_flash"), videoExtendMode: "extend" }],
   ["continuation_omni", { videoInfo: video("video_continuation"), isOmniVideo: true }],
   ["continuation_lastframe", { videoInfo: video("video_continuation") }],
   ["connected", { videoInfo: video("i2v") }],

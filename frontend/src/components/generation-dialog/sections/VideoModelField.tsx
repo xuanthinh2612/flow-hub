@@ -1,10 +1,11 @@
 import { VIDEO_MODEL_CHIPS } from "../constants";
 import type { VideoModelFamily, VideoQuality } from "../../../store/settings";
+import type { ConnectedVideoAction } from "../types";
 import { InfoTip } from "./InfoTip";
 
 interface VideoModelFieldProps {
   isVideo: boolean;
-  isExtend: boolean;
+  connectedVideoAction: ConnectedVideoAction | null;
   videoModelFamily: VideoModelFamily;
   videoQuality: VideoQuality;
   setVideoModel: (value: VideoModelFamily) => void;
@@ -15,7 +16,7 @@ interface VideoModelFieldProps {
 
 export function VideoModelField({
   isVideo,
-  isExtend,
+  connectedVideoAction,
   videoModelFamily,
   videoQuality,
   setVideoModel,
@@ -23,18 +24,29 @@ export function VideoModelField({
   isWorking,
   paygateTier,
 }: VideoModelFieldProps) {
+  const fixedModelLabel = connectedVideoAction === "extend"
+    ? "Veo 3.1 Extension Lite (fZytfe)"
+    : connectedVideoAction === "video_reference"
+      ? "Omni Flash"
+      : null;
+  const modelOptions = VIDEO_MODEL_CHIPS;
+
   return (
     <>
       {/* Model picker comes first so selecting Omni reveals its options
           directly below. */}
-        {isVideo && isExtend ? (
+        {isVideo && fixedModelLabel ? (
           <div className="gen-dialog__field">
             <span className="gen-dialog__label">
               Model
-              <InfoTip tip="Veo 3.1 Extension Lite (fZytfe): Model chuyên dụng của Flow để kéo dài video clip đã có." />
+              <InfoTip tip={
+                connectedVideoAction === "extend"
+                  ? "Veo 3.1 Extension Lite (fZytfe): Model chuyên dụng của Flow để kéo dài video clip đã có."
+                  : "Omni Flash: Model chuyên dụng của Flow để chỉnh sửa/tạo video từ video tham chiếu (jIps6)."
+              } />
             </span>
             <div style={{ padding: '8px 12px', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '6px', fontSize: '13px', color: '#fff' }}>
-              Veo 3.1 Extension Lite (fZytfe)
+              {fixedModelLabel}
             </div>
           </div>
         ) : isVideo && (
@@ -58,7 +70,7 @@ export function VideoModelField({
                 setVideoQuality(quality);
               }}
             >
-              {VIDEO_MODEL_CHIPS.map((m) => {
+              {modelOptions.map((m) => {
                 if (m.kind === "omni") {
                   return <option key="omni" value="omni">Omni Flash</option>;
                 }

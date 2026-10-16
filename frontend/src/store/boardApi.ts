@@ -175,7 +175,12 @@ export async function createRequest(input: {
       };
       if (params.extract_start_video_id) spec.extract_start_video_id = params.extract_start_video_id;
       if (params.video_quality) {
-        spec.model = `veo_3_1_i2v_${params.video_quality}`;
+        const i2vModelIds: Record<string, string> = {
+          lite: "veo_3_1_i2v_lite",
+          fast_ultra: "veo_3_1_i2v_s_fast_ultra",
+          lite_low_priority: "veo_3_1_i2v_lite_low_priority",
+        };
+        spec.model = i2vModelIds[String(params.video_quality)] ?? `veo_3_1_i2v_${params.video_quality}`;
       }
     }
   } else if (type === "gen_video_omni") {

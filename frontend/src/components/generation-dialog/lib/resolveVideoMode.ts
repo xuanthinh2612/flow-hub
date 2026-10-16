@@ -68,7 +68,11 @@ export function resolveVideoMode(input: ResolveVideoModeInput): ResolvedVideoMod
     videoInfo?.mode === "video_continuation" &&
     videoInfo.sourceNodeFamily === "veo";
   const isExtend =
-    isUpstreamVeoVideo && !isOmniVideo && videoExtendMode === "extend";
+    isUpstreamVeoVideo &&
+    !isOmniVideo &&
+    omniVideoMode !== "video_reference" &&
+    actualConnectedMode !== "r2v" &&
+    videoExtendMode === "extend";
 
   let videoUiKey: VideoUiKey;
   if (isOmniVideo && omniVideoMode === "video_reference") {

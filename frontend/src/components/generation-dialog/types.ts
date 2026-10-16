@@ -14,6 +14,8 @@ export type RefSourceEntry = {
   allVariants: string[];
 };
 
+export type ConnectedVideoAction = "continuation" | "r2v" | "extend" | "video_reference";
+
 export type GenerationFormState = {
   prompt: string;
   aspectRatio: string;

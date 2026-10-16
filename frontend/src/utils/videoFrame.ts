@@ -58,8 +58,30 @@ export function getVideoUpstreamInfo(
     // extend_video (Veo-only) vs video_continuation (model-agnostic).
     const gen = sourceNode.data.generation as any;
     const rawFamily = gen?.model?.family ?? gen?.videoModel;
+    const modelId = typeof gen?.model?.id === 'string' ? gen.model.id : '';
+    // A default Veo preference is stored on every newly created video node,
+    // including nodes that later receive an uploaded clip. Generated nodes
+    // carry a request id; older Veo nodes may lack the completion quality
+    // stamp, so accept either generation marker while excluding uploads.
+    const isVeoModel = rawFamily === 'veo'
+      || modelId.startsWith('veo_')
+      || gen?.videoMode === 'extend_video';
+    const isOmniModel = rawFamily === 'omni_flash'
+      || modelId.startsWith('abra_')
+      || gen?.videoMode === 'video_reference';
+    const generatedVideoModel = (sourceNode.data as any)?.videoQuality ?? gen?.model?.quality;
+    const hasGenerationMarker = (typeof generatedVideoModel === 'string'
+        && generatedVideoModel.length > 0
+        && !generatedVideoModel.startsWith('abra_'))
+      || (typeof sourceNode.data.lastRequestId === 'string' && sourceNode.data.lastRequestId.length > 0)
+      || sourceNode.data.status === 'queued'
+      || sourceNode.data.status === 'running';
     const sourceNodeFamily: string | undefined = isVideo
-      ? (rawFamily === 'omni_flash' ? 'omni_flash' : 'veo')
+      ? isOmniModel
+        ? 'omni_flash'
+        : hasGenerationMarker && isVeoModel
+          ? 'veo'
+          : undefined
       : undefined;
 
     return {

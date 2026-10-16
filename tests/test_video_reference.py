@@ -198,7 +198,9 @@ def test_api_canvas_request_video_reference_validation(tmp_path):
     assert res.status_code == 201
     body = res.json()
     assert body["status"] in ("queued", "running")
-    assert body["spec"]["type"] == "video_reference"
-    assert body["spec"]["source_media_id"] == "vid-in-proj"
-    assert body["spec"]["model"] == "abra_edit"
+    req_row = core.db.one("SELECT job_id FROM canvas_requests WHERE id=?", (body["id"],))
+    job = core.jobs.get(req_row["job_id"])
+    assert job["spec"]["type"] == "video_reference"
+    assert job["spec"]["source_media_id"] == "vid-in-proj"
+    assert job["spec"]["model"] == "abra_edit"
 

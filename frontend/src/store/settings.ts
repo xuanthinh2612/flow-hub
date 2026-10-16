@@ -28,7 +28,9 @@ export type VideoQuality =
   | "fast"
   | "lite"
   | "quality"
-  | "lite_relaxed";
+  | "lite_relaxed"
+  | "fast_ultra"
+  | "lite_low_priority";
 
 // Video model family. "veo" = the existing Veo 3.1 i2v family controlled
 // by videoQuality (lite/fast/quality/...). "omni_flash" = the new
@@ -104,7 +106,7 @@ function persist(state: PersistShape): void {
 
 const persisted = loadPersisted();
 
-const VALID_VIDEO_QUALITIES: VideoQuality[] = ["fast", "lite", "quality", "lite_relaxed"];
+const VALID_VIDEO_QUALITIES: VideoQuality[] = ["fast", "lite", "quality", "lite_relaxed", "fast_ultra", "lite_low_priority"];
 const VALID_MEDIA_PROVIDERS: MediaProviderKey[] = ["flow", "muse"];
 const VALID_OMNI_DURATIONS = [4, 6, 8, 10];
 

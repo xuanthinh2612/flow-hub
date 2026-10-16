@@ -1,19 +1,19 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { FlowNode } from "../../../store/board";
 import type { VideoUpstreamInfo } from "../../../utils/videoFrame";
+import type { ConnectedVideoAction } from "../types";
 import { VideoContinuationPanel } from "./VideoContinuationPanel";
 import { ConnectedImageSources } from "./ConnectedImageSources";
 
 interface VideoConnectedSourceProps {
   isVideo: boolean;
   videoInfo: VideoUpstreamInfo | null;
+  action: ConnectedVideoAction | null;
+  onActionChange: (value: ConnectedVideoAction) => void;
   isExtend: boolean;
   isOmniVideo: boolean;
   omniVideoMode: "default" | "video_reference";
-  setOmniVideoMode: (value: "default" | "video_reference") => void;
   isUpstreamVeoVideo: boolean;
-  videoExtendMode: "continuation" | "extend";
-  setVideoExtendMode: (value: "continuation" | "extend") => void;
   isWorking: boolean;
   totalConnectedSources: number;
   connectedVideoMode: "i2v" | "r2v";
@@ -34,15 +34,13 @@ export function VideoConnectedSource(props: VideoConnectedSourceProps) {
         <div className="gen-dialog__field">
           <VideoContinuationPanel
             videoInfo={videoInfo}
+            action={props.action ?? "continuation"}
+            onActionChange={props.onActionChange}
             isExtend={props.isExtend}
             isOmniVideo={props.isOmniVideo}
             omniVideoMode={props.omniVideoMode}
-            setOmniVideoMode={props.setOmniVideoMode}
             isUpstreamVeoVideo={props.isUpstreamVeoVideo}
-            videoExtendMode={props.videoExtendMode}
-            setVideoExtendMode={props.setVideoExtendMode}
             connectedVideoMode={props.connectedVideoMode}
-            setConnectedVideoMode={props.setConnectedVideoMode}
             isWorking={props.isWorking}
           />
           <ConnectedImageSources

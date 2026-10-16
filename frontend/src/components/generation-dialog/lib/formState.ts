@@ -90,9 +90,8 @@ export function hydrateForm(snapshot: FormSnapshot): GenerationFormState {
   const savedGeneration = (node?.data.generation ?? {}) as NodeGeneration;
   const savedForm = savedGeneration as Partial<GenerationFormState>;
   const backend = savedForm.backend ?? defaults.mediaProvider;
-  const videoModel = savedGeneration.model?.family;
+  const storedVideoModelFamily = savedGeneration.model?.family;
   const imageModel = savedGeneration.model?.family === "image" ? savedGeneration.model.id : undefined;
-  const videoQuality = savedGeneration.model?.quality;
   const duration = savedGeneration.duration;
   const resolution = savedGeneration.resolution;
 
@@ -128,6 +127,16 @@ export function hydrateForm(snapshot: FormSnapshot): GenerationFormState {
   const videoInfo = nodeType === "video"
     ? getVideoUpstreamInfo(rfId, nodes, edges)
     : null;
+  const isSavedVideoReference = savedGeneration.videoMode === "video_reference"
+    || savedForm.omniVideoMode === "video_reference";
+  const videoModel = isSavedVideoReference ? "omni_flash" : storedVideoModelFamily;
+  const connectedVideoMode = savedForm.connectedVideoMode
+    ?? (savedGeneration.videoMode === "r2v" ? "r2v" : "i2v");
+  const videoQuality: VideoQuality = savedGeneration.model?.quality === "fast" || savedGeneration.model?.quality === "lite" ||
+    savedGeneration.model?.quality === "quality" || savedGeneration.model?.quality === "lite_relaxed" ||
+    savedGeneration.model?.quality === "fast_ultra" || savedGeneration.model?.quality === "lite_low_priority"
+    ? savedGeneration.model.quality
+    : defaults.videoQuality;
   const sourceMediaIds = videoInfo?.sourceMediaIds ??
     (videoInfo?.sourceMediaId ? [videoInfo.sourceMediaId] : []);
   const storedVideoReference = savedGeneration.videoReference?.sourceMediaId ??
@@ -150,11 +159,10 @@ export function hydrateForm(snapshot: FormSnapshot): GenerationFormState {
     t2vLibraryMediaItem: (savedForm.t2vLibraryMediaItem as MediaItem | null | undefined) ?? null,
     independentVideoMediaIds: savedForm.independentVideoMediaIds ?? [],
     independentVideoMode: savedForm.independentVideoMode ?? "i2v",
-    connectedVideoMode: savedForm.connectedVideoMode ?? "i2v",
+    connectedVideoMode,
     videoExtendMode: savedForm.videoExtendMode === "extend" ? "extend" : "continuation",
     r2vAdditionalMediaIds: savedForm.r2vAdditionalMediaIds ?? [],
-    omniVideoMode: savedGeneration.videoMode === "video_reference" ||
-      savedForm.omniVideoMode === "video_reference"
+    omniVideoMode: isSavedVideoReference
       ? "video_reference"
       : "default",
     videoReferenceMediaId: typeof storedVideoReference === "string" ? storedVideoReference : null,
@@ -165,10 +173,7 @@ export function hydrateForm(snapshot: FormSnapshot): GenerationFormState {
     videoModel: videoModel === "veo" || videoModel === "omni_flash"
       ? videoModel
       : defaults.videoModel,
-    videoQuality: videoQuality === "fast" || videoQuality === "lite" ||
-      videoQuality === "quality" || videoQuality === "lite_relaxed"
-      ? videoQuality
-      : defaults.videoQuality,
+    videoQuality,
     omniFlashDuration: duration === 4 || duration === 6 || duration === 8 || duration === 10
       ? duration
       : defaults.omniFlashDuration,
@@ -239,11 +244,11 @@ export function serializeForm(
           videoMode: isVideoRefActive
             ? "video_reference"
             : videoMode === "video_continuation"
-              ? form.videoModel === "veo" &&
-                videoSourceNodeFamily === "veo" &&
-                form.videoExtendMode === "extend"
-                ? "extend_video"
-                : "i2v"
+              ? form.connectedVideoMode === "r2v"
+                ? "r2v"
+                : form.videoExtendMode === "extend" && videoSourceNodeFamily === "veo"
+                  ? "extend_video"
+                  : "i2v"
               : hasAnyIncomingEdge
                 ? form.connectedVideoMode
                 : form.independentVideoMode,

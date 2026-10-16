@@ -1,48 +1,31 @@
 import type { VideoUpstreamInfo } from "../../../utils/videoFrame";
+import type { ConnectedVideoAction } from "../types";
 import { SourcePendingNotice } from "./SourcePendingNotice";
 import { mediaUrl } from "../../../canvas/canvasApi";
 
 interface VideoContinuationPanelProps {
   videoInfo: VideoUpstreamInfo | null;
+  action: ConnectedVideoAction;
+  onActionChange: (value: ConnectedVideoAction) => void;
   isExtend: boolean;
   isOmniVideo: boolean;
   omniVideoMode: "default" | "video_reference";
-  setOmniVideoMode: (value: "default" | "video_reference") => void;
   isUpstreamVeoVideo: boolean;
-  videoExtendMode: "continuation" | "extend";
-  setVideoExtendMode: (value: "continuation" | "extend") => void;
   connectedVideoMode: "i2v" | "r2v";
-  setConnectedVideoMode: (value: "i2v" | "r2v") => void;
   isWorking: boolean;
 }
 
 export function VideoContinuationPanel({
   videoInfo,
+  action,
+  onActionChange,
   isExtend,
   isOmniVideo,
   omniVideoMode,
-  setOmniVideoMode,
   isUpstreamVeoVideo,
-  videoExtendMode,
-  setVideoExtendMode,
   connectedVideoMode,
-  setConnectedVideoMode,
   isWorking,
 }: VideoContinuationPanelProps) {
-  const selectedMode = isOmniVideo && omniVideoMode === "video_reference"
-    ? "video_reference"
-    : connectedVideoMode === "r2v"
-      ? "r2v"
-      : isExtend
-        ? "extend"
-        : "continuation";
-
-  const handleModeChange = (value: string) => {
-    setConnectedVideoMode(value === "r2v" ? "r2v" : "i2v");
-    setVideoExtendMode(value === "extend" ? "extend" : "continuation");
-    setOmniVideoMode(value === "video_reference" ? "video_reference" : "default");
-  };
-
   return (
     <>
             {videoInfo?.mode === "video_continuation" && (
@@ -62,18 +45,16 @@ export function VideoContinuationPanel({
                       </span>
                       <select
                         className="source-mode-select"
-                        value={selectedMode}
-                        onChange={(e) => handleModeChange(e.target.value)}
+                        value={action}
+                        onChange={(e) => onActionChange(e.target.value as ConnectedVideoAction)}
                         disabled={isWorking}
                       >
                         <option value="continuation">Nối tiếp video</option>
-                        <option value="r2v">Ingredients (r2v)</option>
-                        {isUpstreamVeoVideo && !isOmniVideo && (
+                        <option value="r2v">Ingredients (R2V)</option>
+                        {isUpstreamVeoVideo && (
                           <option value="extend">Kéo dài (Extend video)</option>
                         )}
-                        {isOmniVideo && (
-                          <option value="video_reference">Tham chiếu video</option>
-                        )}
+                        <option value="video_reference">Tham chiếu video</option>
                       </select>
                     </div>
                     <p className="source-info-box__desc">

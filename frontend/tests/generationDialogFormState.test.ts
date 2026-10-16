@@ -139,3 +139,22 @@ test("serializeForm persists video form fields and continuation mode", () => {
   assert.equal(serialized.independentVideoMode, "r2v");
   assert.deepEqual(serialized.r2vAdditionalMediaIds, ["extra"]);
 });
+
+test("hydrateForm preserves saved videoQuality in continuation mode", () => {
+  const videoNode = node("target", "video", {
+    model: { family: "veo", quality: "quality" },
+    connectedVideoMode: "i2v",
+  });
+  const upstreamVideo = node("source", "video", {}, ["video-m1"]);
+  const formState = hydrateForm({
+    rfId: "target",
+    nodes: [videoNode, upstreamVideo],
+    edges: [{ id: "edge", source: "source", target: "target" }],
+    defaults,
+    seedPrompt: "prompt",
+    boardPublicId: "board",
+  });
+
+  assert.equal(formState.videoQuality, "quality");
+});
+
