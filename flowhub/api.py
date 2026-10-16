@@ -235,6 +235,76 @@ def _remove_file(path: str) -> None:
         pass
 
 
+def _video_export_names(db: Any, board_id: int, public_id: str) -> dict[str, str]:
+    """Map video media ids to ordered, node-labelled archive filenames."""
+    rows = db.all("SELECT id, type, short_id, x, y, data FROM canvas_nodes WHERE board_id=?", (board_id,))
+    nodes: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        data = row.get("data")
+        if isinstance(data, str):
+            try:
+                data = json.loads(data or "{}")
+            except (TypeError, ValueError):
+                data = {}
+        row["data"] = data if isinstance(data, dict) else {}
+        nodes[int(row["id"])] = row
+
+    # Walk the directed canvas chain in stable order. Unconnected and legacy
+    # nodes are appended by position and id so every board gets reproducible
+    # filenames, even when it has disconnected branches.
+    edges = db.all("SELECT source_id, target_id, id FROM canvas_edges WHERE board_id=? ORDER BY id", (board_id,))
+    outgoing: dict[int, list[int]] = {node_id: [] for node_id in nodes}
+    incoming: set[int] = set()
+    for edge in edges:
+        source, target = int(edge["source_id"]), int(edge["target_id"])
+        if source in nodes and target in nodes:
+            outgoing[source].append(target)
+            incoming.add(target)
+
+    def position(node_id: int) -> tuple[float, float, int]:
+        node = nodes[node_id]
+        return (float(node.get("x") or 0), float(node.get("y") or 0), node_id)
+
+    ordered: list[int] = []
+    seen: set[int] = set()
+
+    def visit(node_id: int) -> None:
+        if node_id in seen:
+            return
+        seen.add(node_id)
+        ordered.append(node_id)
+        for target in sorted(outgoing[node_id], key=position):
+            visit(target)
+
+    for node_id in sorted((n for n in nodes if n not in incoming), key=position):
+        visit(node_id)
+    for node_id in sorted(nodes, key=position):
+        visit(node_id)
+
+    media_to_filename: dict[str, str] = {}
+    index = 0
+    for node_id in ordered:
+        node = nodes[node_id]
+        if node.get("type") != "video":
+            continue
+        data = node["data"]
+        media_ids = data.get("mediaIds") if isinstance(data.get("mediaIds"), list) else []
+        media_ids = [str(value) for value in [data.get("mediaId"), *media_ids] if value]
+        title = str(data.get("title") or node.get("short_id") or f"video-{node_id}")
+        safe_title = "".join(ch if ch.isalnum() or ch in "-_ " else "_" for ch in title).strip(" ._-") or f"video-{node_id}"
+        for media_id in dict.fromkeys(media_ids):
+            media = db.one("SELECT kind, workspace_id FROM media WHERE id=?", (media_id,))
+            if not media or media.get("kind") != "video" or media.get("workspace_id") != public_id:
+                continue
+            index += 1
+            path = db.one("SELECT local_path, mime FROM media WHERE id=?", (media_id,)) or {}
+            ext = os.path.splitext((path.get("local_path") or ""))[1]
+            if not ext:
+                ext = {"video/mp4": ".mp4", "video/webm": ".webm"}.get(path.get("mime"), ".bin")
+            media_to_filename[media_id] = f"{index:03d}_{safe_title}{ext}"
+    return media_to_filename
+
+
 @api.get("/projects/{public_id}/media.zip", tags=["canvas"])
 async def export_project_media(public_id: str, request: Request, background: BackgroundTasks):
     """Bulk export: every local media file of the project, zipped.
@@ -252,10 +322,21 @@ async def export_project_media(public_id: str, request: Request, background: Bac
         raise HTTPException(404, "project chưa có media nào")
     fd, tmp = tempfile.mkstemp(suffix=".zip", prefix="media-export-")
     os.close(fd)
+    video_names = _video_export_names(core.db, project["id"], project["public_id"])
+    media_by_path = {
+        os.path.abspath(row["local_path"]): row["id"]
+        for row in core.db.all("SELECT id, local_path FROM media WHERE workspace_id=? AND local_path IS NOT NULL", (project["public_id"],))
+    }
+    media_by_id = {
+        row["id"]: row["id"]
+        for row in core.db.all("SELECT id FROM media WHERE workspace_id=?", (project["public_id"],))
+    }
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(folder.iterdir()):
             if path.is_file():
-                zf.write(path, arcname=f"{project['public_id']}/{path.name}")
+                media_id = media_by_path.get(os.path.abspath(path)) or media_by_id.get(path.stem)
+                name = video_names.get(media_id, path.name) if media_id else path.name
+                zf.write(path, arcname=f"{project['public_id']}/{name}")
     background.add_task(_remove_file, tmp)
     return FileResponse(tmp, media_type="application/zip", filename=f"{project['public_id']}-media.zip")
 
