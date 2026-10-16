@@ -1,7 +1,6 @@
 import type { RefObject } from "react";
 import { totalPanels } from "../../../lib/storyboardPrompt";
 import type { StoryboardGrid } from "../../../store/board";
-import type { VideoUpstreamInfo } from "../../../utils/videoFrame";
 
 interface PromptFieldProps {
   isVideo: boolean;
@@ -16,11 +15,7 @@ interface PromptFieldProps {
   autoPromptUsed: boolean;
   setAutoPromptUsed: (value: boolean) => void;
   firstFocusRef: RefObject<HTMLTextAreaElement | null>;
-  isOmniVideo: boolean;
-  omniVideoMode: "default" | "video_reference";
-  videoInfo: VideoUpstreamInfo | null;
-  independentVideoEffectiveMode: string | undefined;
-  isExtend: boolean;
+  videoPlaceholder: string;
   aiBriefStatus: string | undefined;
 }
 
@@ -37,11 +32,7 @@ export function PromptField({
   autoPromptUsed,
   setAutoPromptUsed,
   firstFocusRef,
-  isOmniVideo,
-  omniVideoMode,
-  videoInfo,
-  independentVideoEffectiveMode,
-  isExtend,
+  videoPlaceholder,
   aiBriefStatus,
 }: PromptFieldProps) {
   return (
@@ -71,19 +62,7 @@ export function PromptField({
               }}
               placeholder={
                 isVideo
-                  ? (isOmniVideo && omniVideoMode === "video_reference")
-                    ? "Mô tả chỉnh sửa video theo video tham chiếu (vd: đổi nhân vật trong video, đổi trang phục, bối cảnh)…"
-                    : videoInfo?.mode === "t2v"
-                    ? independentVideoEffectiveMode === "t2v"
-                      ? "Nhập mô tả video cần tạo (Text to Video)…"
-                      : independentVideoEffectiveMode === "i2v"
-                        ? "Bỏ trống để tự sinh motion prompt từ source image ✨ hoặc nhập prompt…"
-                        : "Bỏ trống để tự sinh motion prompt từ các source images ✨ hoặc nhập prompt…"
-                    : videoInfo?.mode === "video_continuation"
-                    ? isExtend
-                      ? "Nhập mô tả diễn biến tiếp theo để kéo dài video (Veo Extension)…"
-                      : "Nhập mô tả diễn biến tiếp theo sau frame cuối của video trước…"
-                    : "Bỏ trống để tự sinh motion prompt từ source image ✨ hoặc nhập prompt…"
+                  ? videoPlaceholder
                   : isPrompt
                   ? "Nhập prompt mồi để feed cho downstream image / video…"
                   : "Bỏ trống để tự generate prompt từ upstream nodes ✨"

@@ -37,6 +37,8 @@ import { type RefSourceEntry, type GenerationFormState } from "./types";
 import { buildCharacterPrompt } from "./lib/characterPrompt";
 import { cameraInstruction } from "./lib/cameraInstruction";
 import { pickDefaultAspect } from "./lib/aspect";
+import { canSubmitVideo, computeCanGenerate, resolveVideoMode } from "./lib/resolveVideoMode";
+import { VIDEO_MODE_UI } from "./lib/videoModeUi";
 import { CharacterBuilder } from "./sections/CharacterBuilder";
 import { OmniOptions } from "./sections/OmniOptions";
 import { CameraField } from "./sections/CameraField";
@@ -144,25 +146,6 @@ export function GenerationDialog() {
   const isCharacter = targetType === "character";
   const isStoryboard = targetType === "Storyboard";
 
-  // A standalone video node remains structurally t2v in the graph, but
-  // picking library images changes the effective generation mode.
-  const independentVideoEffectiveMode: "t2v" | "i2v" | "r2v" | "video_reference" =
-    isOmniVideo && omniVideoMode === "video_reference"
-      ? "video_reference"
-      : independentVideoMediaIds.length > 1
-        ? "r2v"
-        : independentVideoMediaIds.length === 1
-          ? independentVideoMode
-          : "t2v";
-  const independentVideoModeLabel =
-    independentVideoEffectiveMode === "video_reference"
-      ? "Video Reference (jIps6)"
-      : independentVideoEffectiveMode === "t2v"
-        ? "Text → Video (t2v)"
-        : independentVideoEffectiveMode === "i2v"
-          ? "Image → Video (i2v)"
-          : "Ingredients (r2v)";
-
   const persistIndependentVideoSelection = (
     mediaIds: string[],
     mode: "i2v" | "r2v" = independentVideoMode,
@@ -235,14 +218,41 @@ export function GenerationDialog() {
         }).length
     : 0;
   const totalConnectedSources = rawRefSourceNodeCount + r2vAdditionalMediaIds.length;
-  const actualConnectedMode = videoInfo?.mode === "i2v" 
-    ? (totalConnectedSources >= 2 ? "r2v" : connectedVideoMode) 
-    : videoInfo?.mode;
-  const isEffectiveR2v = isVideo && (
-    (videoInfo?.mode === "i2v" || videoInfo?.mode === "r2v") && actualConnectedMode === "r2v"
-  );
-  const isUpstreamVeoVideo = videoInfo?.mode === "video_continuation" && videoInfo.sourceNodeFamily === "veo";
-  const isExtend = isUpstreamVeoVideo && videoExtendMode === "extend";
+  const resolvedVideoMode = resolveVideoMode({
+    isVideo,
+    isOmniVideo,
+    omniVideoMode,
+    videoInfo,
+    independentVideoMediaIds,
+    independentVideoMode,
+    videoExtendMode,
+    totalConnectedSources,
+    connectedVideoMode,
+  });
+  const {
+    independentVideoEffectiveMode,
+    actualConnectedMode,
+    isEffectiveR2v,
+    isUpstreamVeoVideo,
+    isExtend,
+    videoUiKey,
+  } = resolvedVideoMode;
+  const independentVideoModeLabel =
+    independentVideoEffectiveMode === "video_reference"
+      ? "Video Reference (jIps6)"
+      : independentVideoEffectiveMode === "t2v"
+        ? "Text → Video (t2v)"
+        : independentVideoEffectiveMode === "i2v"
+          ? "Image → Video (i2v)"
+          : "Ingredients (r2v)";
+  const videoModeUiContext = {
+    independentVideoEffectiveMode,
+    independentVideoModeLabel,
+    isOmniVideo,
+    isExtend,
+    videoInfo,
+  };
+  const videoUi = VIDEO_MODE_UI[videoUiKey];
   // Prompt nodes are text-only — clicking Generate runs auto_prompt
   // synthesis from upstream context and writes the result back to
   // node.data.generation.prompt. No image dispatch, no aspect/variants.
@@ -964,26 +974,33 @@ export function GenerationDialog() {
   // Veo i2v needs at least one selected source variant; Omni Flash
   // needs at least one ingredient (any upstream image-bearing node).
   // t2v requires prompt. video_continuation requires upstream video to be done.
-  const isVideoReady =
-    !isVideo ||
-    (isOmniVideo && omniVideoMode === "video_reference"
-      ? (Boolean(videoReferenceMediaId) || (videoInfo?.mode === "video_continuation" && (Boolean(videoInfo.sourceMediaId) || hasPendingUpstream))) && !extractingFrame
-      : videoInfo?.mode === "t2v"
-      ? (isOmniVideo ? independentVideoMediaIds.length > 0 : (prompt.trim().length > 0 || independentVideoMediaIds.length > 0)) && !extractingFrame
-      : videoInfo?.mode === "video_continuation"
-      ? (Boolean(videoInfo.sourceMediaId) || hasPendingUpstream) &&
-        (videoInfo.sourceNode?.data.status === "done" || hasPendingUpstream) &&
-        (isExtend ? true : !extractingFrame)
-      : (isEffectiveR2v
-          ? (refSourceNodes.length > 0 || r2vAdditionalMediaIds.length > 0 || hasPendingUpstream)
-          : (selectedSourceIdx.size > 0 || hasPendingUpstream)) && !extractingFrame);
+  const isVideoReady = canSubmitVideo({
+    isVideo,
+    isOmniVideo,
+    omniVideoMode,
+    videoReferenceMediaId,
+    videoInfo,
+    hasPendingUpstream,
+    extractingFrame,
+    independentVideoMediaIds,
+    prompt,
+    isExtend,
+    isEffectiveR2v,
+    refSourceNodes,
+    r2vAdditionalMediaIds,
+    selectedSourceCount: selectedSourceIdx.size,
+  });
 
   // FIX(bug 2): Keep character generation disabled while any work is running.
-  const canGenerate = isCharacter
-    ? (charGender !== null || charCountry !== null || charExtras.trim().length > 0) && !isWorking
-    : isVideo
-    ? isVideoReady && !isWorking
-    : !isWorking;
+  const canGenerate = computeCanGenerate({
+    isCharacter,
+    charGender,
+    charCountry,
+    charExtras,
+    isVideo,
+    isVideoReady,
+    isWorking,
+  });
 
   return (
     <div
@@ -1005,19 +1022,7 @@ export function GenerationDialog() {
           <div>
             <h2 id="gen-dialog-title" className="gen-dialog__title">
               {isVideo
-                ? (isOmniVideo && omniVideoMode === "video_reference")
-                  ? "Tham chiếu video (Omni Flash - jIps6)"
-                  : videoInfo?.mode === "t2v"
-                  ? independentVideoEffectiveMode === "t2v"
-                    ? "Tạo video từ Text (t2v)"
-                    : independentVideoEffectiveMode === "i2v"
-                      ? "Tạo video từ Ảnh (i2v)"
-                      : "Tạo video từ Ingredients (r2v)"
-                  : videoInfo?.mode === "video_continuation"
-                  ? isExtend
-                    ? "Kéo dài video (Extend Video)"
-                    : "Nối tiếp video (Frame cuối)"
-                  : "Tạo video từ Ảnh (i2v)"
+                ? videoUi.title
                 : isCharacter
                 ? "Generate character"
                 : isStoryboard
@@ -1029,8 +1034,8 @@ export function GenerationDialog() {
             <span className="gen-dialog__subtitle">
               Node #{node?.data.shortId ?? rfId}
               {isVideo && videoInfo && (
-                <span className={`gen-dialog__mode-badge gen-dialog__mode-badge--${isOmniVideo && omniVideoMode === "video_reference" ? "video_reference" : (videoInfo.mode === "t2v" ? independentVideoEffectiveMode : (isExtend ? "extend" : videoInfo.mode))}`}>
-                  {isOmniVideo && omniVideoMode === "video_reference" ? "Tham chiếu video (Omni Flash)" : (videoInfo.mode === "t2v" ? independentVideoModeLabel : (isExtend ? "Extend video (Veo)" : videoInfo.label))}
+                <span className={`gen-dialog__mode-badge gen-dialog__mode-badge--${videoUi.badgeClass(videoModeUiContext)}`}>
+                  {videoUi.badgeLabel(videoModeUiContext)}
                 </span>
               )}
             </span>
@@ -1057,11 +1062,7 @@ export function GenerationDialog() {
           autoPromptUsed={autoPromptUsed}
           setAutoPromptUsed={setAutoPromptUsed}
           firstFocusRef={firstFocusRef}
-          isOmniVideo={isOmniVideo}
-          omniVideoMode={omniVideoMode}
-          videoInfo={videoInfo}
-          independentVideoEffectiveMode={independentVideoEffectiveMode}
-          isExtend={isExtend}
+          videoPlaceholder={videoUi.placeholder}
           aiBriefStatus={node?.data.aiBriefStatus}
         />
 

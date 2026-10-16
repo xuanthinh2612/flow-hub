@@ -1,6 +1,5 @@
 ﻿import type { VideoUpstreamInfo } from "../../../utils/videoFrame";
 import { MediaPicker } from "../../MediaPicker";
-import { mediaUrl } from "../../../canvas/canvasApi";
 import { MINI_SELECT_STYLE } from "../constants";
 import { VideoReferencePanel } from "./VideoReferencePanel";
 
