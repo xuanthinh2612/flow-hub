@@ -6,6 +6,7 @@ export interface VideoModeUiContext {
   independentVideoModeLabel: string;
   isOmniVideo: boolean;
   isExtend: boolean;
+  isEffectiveR2v: boolean;
   videoInfo: VideoUpstreamInfo | null;
 }
 
@@ -66,10 +67,9 @@ export const VIDEO_MODE_UI: Record<VideoUiKey, VideoModeUiEntry> = {
     badgeClass: () => "video_continuation",
   },
   connected: {
-    title: "Tạo video từ Ảnh (i2v)",
-    placeholder:
-      "Bỏ trống để tự sinh motion prompt từ source image ✨ hoặc nhập prompt…",
-    badgeLabel: (context) => context.videoInfo?.label ?? "Ảnh → Video (i2v)",
-    badgeClass: (context) => context.videoInfo?.mode ?? "i2v",
+    title: "T\u1ea1o video t\u1eeb ngu\u1ed3n \u0111\u00e3 n\u1ed1i",
+    placeholder: "M\u00f4 t\u1ea3 c\u00e1ch ngu\u1ed3n \u0111\u00e3 n\u1ed1i \u0111\u1ecbnh h\u00ecnh video m\u1edbi.",
+    badgeLabel: context => context.isEffectiveR2v ? "Ingredients (R2V)" : context.videoInfo?.label ?? "Connected source",
+    badgeClass: context => context.isEffectiveR2v ? "r2v" : context.videoInfo?.mode ?? "i2v",
   },
 };

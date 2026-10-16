@@ -301,6 +301,7 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
     independentVideoModeLabel,
     isOmniVideo,
     isExtend,
+    isEffectiveR2v,
     videoInfo,
   };
   const videoUi = VIDEO_MODE_UI[videoUiKey];
@@ -429,7 +430,10 @@ function GenerationDialogContent({ rfId }: { rfId: string }) {
   const refSourceNodes = refSourceEntries.filter((e) => Boolean(e.mediaId)) as Array<RefSourceEntry & { mediaId: string }>;
   const pendingRefNodes = refSourceEntries
     .filter((e) => !e.mediaId)
-    .map((e) => e.node);
+    .map((e) => e.node)
+    .filter((source) =>
+      !(isEffectiveR2v && videoInfo?.mode === "video_continuation" && source.id === videoInfo.sourceNode?.id),
+    );
 
   const hasAnyIncomingEdge = edges.some((edge) => edge.target === rfId);
 

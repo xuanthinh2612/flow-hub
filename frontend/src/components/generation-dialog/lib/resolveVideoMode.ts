@@ -57,10 +57,12 @@ export function resolveVideoMode(input: ResolveVideoModeInput): ResolvedVideoMod
       ? totalConnectedSources >= 2
         ? "r2v"
         : connectedVideoMode
+      : videoInfo?.mode === "video_continuation"
+        ? connectedVideoMode
       : videoInfo?.mode;
   const isEffectiveR2v =
     isVideo &&
-    (videoInfo?.mode === "i2v" || videoInfo?.mode === "r2v") &&
+    (videoInfo?.mode === "i2v" || videoInfo?.mode === "r2v" || videoInfo?.mode === "video_continuation") &&
     actualConnectedMode === "r2v";
   const isUpstreamVeoVideo =
     videoInfo?.mode === "video_continuation" &&
@@ -80,6 +82,8 @@ export function resolveVideoMode(input: ResolveVideoModeInput): ResolvedVideoMod
           : independentVideoEffectiveMode === "r2v"
             ? "independent_r2v"
             : "video_reference";
+  } else if (isEffectiveR2v) {
+    videoUiKey = "connected";
   } else if (videoInfo?.mode === "video_continuation") {
     videoUiKey = isExtend
       ? "continuation_extend"

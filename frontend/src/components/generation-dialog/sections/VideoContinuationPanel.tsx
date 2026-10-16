@@ -1,6 +1,5 @@
 import type { VideoUpstreamInfo } from "../../../utils/videoFrame";
 import { SourcePendingNotice } from "./SourcePendingNotice";
-import { MINI_SELECT_STYLE } from "../constants";
 import { mediaUrl } from "../../../canvas/canvasApi";
 
 interface VideoContinuationPanelProps {
@@ -12,6 +11,8 @@ interface VideoContinuationPanelProps {
   isUpstreamVeoVideo: boolean;
   videoExtendMode: "continuation" | "extend";
   setVideoExtendMode: (value: "continuation" | "extend") => void;
+  connectedVideoMode: "i2v" | "r2v";
+  setConnectedVideoMode: (value: "i2v" | "r2v") => void;
   isWorking: boolean;
 }
 
@@ -24,8 +25,24 @@ export function VideoContinuationPanel({
   isUpstreamVeoVideo,
   videoExtendMode,
   setVideoExtendMode,
+  connectedVideoMode,
+  setConnectedVideoMode,
   isWorking,
 }: VideoContinuationPanelProps) {
+  const selectedMode = isOmniVideo && omniVideoMode === "video_reference"
+    ? "video_reference"
+    : connectedVideoMode === "r2v"
+      ? "r2v"
+      : isExtend
+        ? "extend"
+        : "continuation";
+
+  const handleModeChange = (value: string) => {
+    setConnectedVideoMode(value === "r2v" ? "r2v" : "i2v");
+    setVideoExtendMode(value === "extend" ? "extend" : "continuation");
+    setOmniVideoMode(value === "video_reference" ? "video_reference" : "default");
+  };
+
   return (
     <>
             {videoInfo?.mode === "video_continuation" && (
@@ -35,45 +52,40 @@ export function VideoContinuationPanel({
                   <div className="source-info-box__content" style={{ width: '100%' }}>
                     <div className="gen-dialog__label-row" style={{ alignItems: 'center' }}>
                       <span className="source-info-box__title">
-                        {isExtend
-                          ? `Kéo dài Video #${videoInfo.sourceNode?.data.shortId}`
-                          : (isOmniVideo && omniVideoMode === "video_reference"
-                              ? `Tham chiếu Video #${videoInfo.sourceNode?.data.shortId}`
-                              : `Nối tiếp Video #${videoInfo.sourceNode?.data.shortId}`)}
+                        {connectedVideoMode === "r2v"
+                          ? `R2V source video #${videoInfo.sourceNode?.data.shortId}`
+                          : isExtend
+                            ? `Extend video #${videoInfo.sourceNode?.data.shortId}`
+                            : isOmniVideo && omniVideoMode === "video_reference"
+                              ? `Video reference #${videoInfo.sourceNode?.data.shortId}`
+                              : `Continue video #${videoInfo.sourceNode?.data.shortId}`}
                       </span>
-                      {isUpstreamVeoVideo && !isOmniVideo && (
-                        <select
-                          className="source-select-mini"
-                          value={videoExtendMode}
-                          onChange={(e) => setVideoExtendMode(e.target.value as "continuation" | "extend")}
-                          disabled={isWorking}
-                          style={MINI_SELECT_STYLE}
-                        >
-                          <option value="continuation">Nối tiếp (Frame cuối)</option>
+                      <select
+                        className="source-mode-select"
+                        value={selectedMode}
+                        onChange={(e) => handleModeChange(e.target.value)}
+                        disabled={isWorking}
+                      >
+                        <option value="continuation">Nối tiếp video</option>
+                        <option value="r2v">Ingredients (r2v)</option>
+                        {isUpstreamVeoVideo && !isOmniVideo && (
                           <option value="extend">Kéo dài (Extend video)</option>
-                        </select>
-                      )}
-                      {isOmniVideo && (
-                        <select
-                          className="source-select-mini"
-                          value={omniVideoMode}
-                          onChange={(e) => setOmniVideoMode(e.target.value as "default" | "video_reference")}
-                          disabled={isWorking}
-                          style={MINI_SELECT_STYLE}
-                        >
-                          <option value="default">Nối tiếp video (Omni Flash)</option>
-                          <option value="video_reference">Tham chiếu video này</option>
-                        </select>
-                      )}
+                        )}
+                        {isOmniVideo && (
+                          <option value="video_reference">Tham chiếu video</option>
+                        )}
+                      </select>
                     </div>
                     <p className="source-info-box__desc">
-                      {isExtend
-                        ? "Kéo dài video trực tiếp bằng Veo Extension Lite (fZytfe). Giữ liền mạch bối cảnh và chuyển động của video gốc."
-                        : (isOmniVideo
-                            ? (omniVideoMode === "video_reference"
-                                ? "Sử dụng video của node trước làm video tham chiếu trực tiếp cho Omni Flash (jIps6)."
-                                : "Dùng video của node trước làm nguồn nối tiếp cho Omni Flash.")
-                            : "Frame cuối cùng của video trước sẽ được tự động trích xuất làm điểm bắt đầu (start frame) cho video này.")}
+                      {connectedVideoMode === "r2v"
+                        ? "Dùng video nguồn này làm ingredient (R2V) cho video mới."
+                        : isExtend
+                          ? "Kéo dài video trực tiếp bằng Veo Extension Lite (fZytfe)."
+                          : isOmniVideo
+                            ? omniVideoMode === "video_reference"
+                              ? "Dùng video nguồn làm video tham chiếu cho Omni Flash."
+                              : "Dùng video nguồn làm nguồn nối tiếp cho Omni Flash."
+                            : "Dùng frame cuối của video nguồn làm frame bắt đầu cho video mới."}
                     </p>
                   </div>
                 </div>
@@ -91,13 +103,15 @@ export function VideoContinuationPanel({
                       preload="metadata"
                     />
                     <span className="source-continuation-tag">
-                      {isExtend
-                        ? "✓ Sẵn sàng extend video (Veo 3.1 Extension Lite)"
-                        : (isOmniVideo && omniVideoMode === "video_reference"
-                            ? "✓ Sẵn sàng tham chiếu video (Omni Flash jIps6)"
-                            : (isOmniVideo
-                                ? "✓ Sẵn sàng nối tiếp bằng video này với Omni Flash"
-                                : "✓ Sẵn sàng trích xuất frame cuối khi bấm Generate"))}
+                      {connectedVideoMode === "r2v"
+                        ? "Video nguồn được chọn làm ingredient (R2V)."
+                        : isExtend
+                          ? "Sẵn sàng kéo dài video bằng Veo Extension Lite."
+                          : isOmniVideo && omniVideoMode === "video_reference"
+                            ? "Sẵn sàng dùng video làm tham chiếu cho Omni Flash."
+                            : isOmniVideo
+                              ? "Sẵn sàng nối tiếp từ video này bằng Omni Flash."
+                              : "Sẵn sàng trích frame cuối khi tạo video."}
                     </span>
                   </div>
                 )}

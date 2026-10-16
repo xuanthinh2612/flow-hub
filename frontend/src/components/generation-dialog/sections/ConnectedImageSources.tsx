@@ -39,11 +39,10 @@ export function ConnectedImageSources({
                     Chế độ:
                     {videoInfo?.mode === "i2v" && totalConnectedSources <= 1 ? (
                       <select
-                        className="source-select-mini"
+                        className="source-mode-select"
                         value={connectedVideoMode}
                         onChange={(e) => setConnectedVideoMode(e.target.value as "i2v" | "r2v")}
                         disabled={isWorking}
-                        style={MINI_SELECT_STYLE}
                       >
                         <option value="i2v">Nối tiếp (i2v)</option>
                         <option value="r2v">Ingredients (r2v)</option>

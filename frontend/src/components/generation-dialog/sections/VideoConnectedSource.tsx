@@ -41,6 +41,8 @@ export function VideoConnectedSource(props: VideoConnectedSourceProps) {
             isUpstreamVeoVideo={props.isUpstreamVeoVideo}
             videoExtendMode={props.videoExtendMode}
             setVideoExtendMode={props.setVideoExtendMode}
+            connectedVideoMode={props.connectedVideoMode}
+            setConnectedVideoMode={props.setConnectedVideoMode}
             isWorking={props.isWorking}
           />
           <ConnectedImageSources

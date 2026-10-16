@@ -105,7 +105,7 @@ export function buildVideoSubmit(ctx: BuildVideoSubmitContext): VideoSubmitResul
   }
 
   // 2. Nối tiếp video hoặc Extend video
-  if (videoInfo?.mode === "video_continuation") {
+  if (videoInfo?.mode === "video_continuation" && !isEffectiveR2v) {
     if (!videoInfo.sourceMediaId && !hasPendingUpstream) {
       return {
         ok: false,
@@ -151,7 +151,7 @@ export function buildVideoSubmit(ctx: BuildVideoSubmitContext): VideoSubmitResul
     const sourceVideoIds = sources.filter((source) => source.isVideo).map((source) => source.mediaId);
     return {
       ok: true,
-      patchGeneration: { r2vAdditionalMediaIds },
+      patchGeneration: { r2vAdditionalMediaIds, connectedVideoMode },
       patchNodeData: { extractingFrame: false, extractError: null },
       dispatch: {
         prompt,
