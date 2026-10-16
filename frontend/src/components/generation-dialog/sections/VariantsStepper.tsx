@@ -29,7 +29,7 @@ export function VariantsStepper({
                 type="button"
                 disabled={isWorking || variants <= 1}
                 aria-label="Decrease variants"
-                onClick={() => setVariants((v) => Math.max(1, v - 1))}
+                onClick={() => setVariants(Math.max(1, variants - 1))}
               >
                 −
               </button>
@@ -38,7 +38,7 @@ export function VariantsStepper({
                 type="button"
                 disabled={isWorking || variants >= 4}
                 aria-label="Increase variants"
-                onClick={() => setVariants((v) => Math.min(4, v + 1))}
+                onClick={() => setVariants(Math.min(4, variants + 1))}
               >
                 +
               </button>

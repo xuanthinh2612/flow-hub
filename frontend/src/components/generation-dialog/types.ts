@@ -1,4 +1,4 @@
-import type { StoryboardGrid } from "../../store/board";
+import type { FlowNode, StoryboardGrid } from "../../store/board";
 import type { MediaItem } from "../../api/types";
 import type { ImageModelKey, MediaProviderKey, OmniFlashDuration, OmniFlashResolution, VideoModelFamily, VideoQuality } from "../../store/settings";
 import type { CountryKey, GenderKey, VibeKey } from "../../constants/character";
@@ -23,7 +23,7 @@ export type GenerationFormState = {
   charCountry: CountryKey | null;
   charVibe: VibeKey;
   charExtras: string;
-  selectedSourceIdx: number[];
+  selectedSourceIdx: number[] | null;
   t2vLibraryMediaId: string | null;
   t2vLibraryMediaItem: MediaItem | null;
   independentVideoMediaIds: string[];
@@ -43,4 +43,13 @@ export type GenerationFormState = {
   omniFlashDuration: OmniFlashDuration;
   omniFlashResolution: OmniFlashResolution;
 };
+
+export type FormAction = Partial<GenerationFormState>;
+
+export function reducer(
+  state: GenerationFormState,
+  patch: FormAction,
+): GenerationFormState {
+  return { ...state, ...patch };
+}
 
