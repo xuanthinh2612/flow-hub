@@ -118,6 +118,10 @@ export interface MediaItem {
   aspect?: string;
   job_id?: string;
   local_path?: string;
+  local_path_720p?: string;
+  local_path_1080p?: string;
+  upscale_status?: string;
+  upscale_job_id?: string;
   url?: string;
   poster_url?: string;
   mime?: string;
@@ -172,6 +176,8 @@ export interface SettingsData {
   observe_enabled: boolean;
   observe_responses: boolean;
   download_media: boolean;
+  auto_upscale_1080p?: boolean;
+  delete_720p_after_upscale?: boolean;
   poll_interval_s: number;
   min_submit_gap_s: number;
   job_timeout_min: number;

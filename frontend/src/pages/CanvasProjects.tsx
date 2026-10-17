@@ -22,10 +22,21 @@ export const CanvasProjectsPage: React.FC = () => {
   const [newFlowProjectId, setNewFlowProjectId] = useState('');
   const [exporting, setExporting] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
+  const [exportMediaProject, setExportMediaProject] = useState<Project | null>(null);
   const [workers, setWorkers] = useState<WorkerInfo[]>([]);
   const navigate = useNavigate();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDownloadZip = (resolution?: string) => {
+    if (!exportMediaProject) return;
+    const a = document.createElement('a');
+    a.href = projectMediaZipUrl(exportMediaProject.public_id, resolution);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setExportMediaProject(null);
+  };
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -228,6 +239,126 @@ export const CanvasProjectsPage: React.FC = () => {
         </div>
       )}
 
+      {exportMediaProject && (
+        <div
+          role="presentation"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1000,
+            display: 'grid',
+            placeItems: 'center',
+            background: '#0009',
+            padding: 20,
+          }}
+          onClick={() => setExportMediaProject(null)}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="export-media-title"
+            style={{
+              width: 'min(460px, 100%)',
+              display: 'grid',
+              gap: 16,
+              padding: 24,
+              border: '1px solid #475569',
+              borderRadius: 14,
+              background: '#111827',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div>
+              <h2 id="export-media-title" style={{ margin: '0 0 6px 0', fontSize: '1.2rem' }}>
+                Xuất media project
+              </h2>
+              <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                Project: <strong>{exportMediaProject.name}</strong>
+              </p>
+              <p className="muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
+                Chọn độ phân giải video bạn muốn tải về (.zip):
+              </p>
+            </div>
+
+            <div style={{ display: 'grid', gap: 10 }}>
+              <button
+                type="button"
+                className="btn"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-start',
+                  gap: 12,
+                  padding: '12px 16px',
+                  borderRadius: 8,
+                  textAlign: 'left',
+                }}
+                onClick={() => handleDownloadZip('720p')}
+              >
+                <span style={{ fontSize: 22 }}>🎬</span>
+                <div>
+                  <div style={{ fontWeight: 600 }}>Tải bản 720p (.zip)</div>
+                  <div className="muted" style={{ fontSize: 12 }}>Bản render chuẩn gốc, dung lượng nhẹ hơn</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-start',
+                  gap: 12,
+                  padding: '12px 16px',
+                  borderRadius: 8,
+                  textAlign: 'left',
+                }}
+                onClick={() => handleDownloadZip('1080p')}
+              >
+                <span style={{ fontSize: 22 }}>✨</span>
+                <div>
+                  <div style={{ fontWeight: 600 }}>Tải bản 1080p (.zip)</div>
+                  <div style={{ fontSize: 12, opacity: 0.9 }}>Bản Full HD độ nét cao (khuyên dùng)</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                className="btn"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-start',
+                  gap: 12,
+                  padding: '12px 16px',
+                  borderRadius: 8,
+                  textAlign: 'left',
+                }}
+                onClick={() => handleDownloadZip('all')}
+              >
+                <span style={{ fontSize: 22 }}>📦</span>
+                <div>
+                  <div style={{ fontWeight: 600 }}>Tải tất cả (.zip)</div>
+                  <div className="muted" style={{ fontSize: 12 }}>Bao gồm cả hai bản 720p & 1080p nếu có</div>
+                </div>
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setExportMediaProject(null)}
+              >
+                Hủy
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {loading ? <p className="empty">Đang tải project…</p> : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 16 }}>
           {!projects.length && (
@@ -284,13 +415,14 @@ export const CanvasProjectsPage: React.FC = () => {
                 </select>
               </label>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
-                <a
+                <button
+                  type="button"
                   className="btn btn-sm"
-                  href={projectMediaZipUrl(project.public_id)}
+                  onClick={() => setExportMediaProject(project)}
                   title="Tải toàn bộ ảnh / video của project thành file zip"
                 >
                   Export media
-                </a>
+                </button>
                 <button type="button" className="btn btn-sm" disabled={exporting === project.id} onClick={() => void exportProject(project)} title="Tải cấu hình node và liên kết thành JSON">
                   <Download size={14} /> {exporting === project.id ? 'Đang xuất…' : 'Export JSON'}
                 </button>

@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from . import canvas_chain
 from .catalog import MODES
+from .media import _safe_name
 from .canvas_project_import import CanvasProjectImportError, import_canvas_project, new_public_id
 from .canvas_project_json import CanvasProjectExportError, build_canvas_project_snapshot
 from .config import VERSION
@@ -313,7 +314,12 @@ def _video_export_names(db: Any, board_id: int, public_id: str) -> dict[str, str
 
 
 @api.get("/projects/{public_id}/media.zip", tags=["canvas"])
-async def export_project_media(public_id: str, request: Request, background: BackgroundTasks):
+async def export_project_media(
+    public_id: str,
+    request: Request,
+    background: BackgroundTasks,
+    resolution: Optional[str] = Query(None),
+):
     """Bulk export: every local media file of the project, zipped.
 
     The project id is the folder name under data/media, so the zip mirrors the
@@ -331,8 +337,10 @@ async def export_project_media(public_id: str, request: Request, background: Bac
     os.close(fd)
     video_names = _video_export_names(core.db, project["id"], project["public_id"])
     media_by_path = {
-        os.path.abspath(row["local_path"]): row["id"]
-        for row in core.db.all("SELECT id, local_path FROM media WHERE workspace_id=? AND local_path IS NOT NULL", (project["public_id"],))
+        os.path.abspath(row[col]): row["id"]
+        for row in core.db.all("SELECT id, local_path, local_path_720p, local_path_1080p FROM media WHERE workspace_id=?", (project["public_id"],))
+        for col in ("local_path", "local_path_720p", "local_path_1080p")
+        if row.get(col)
     }
     media_by_id = {
         row["id"]: row["id"]
@@ -340,12 +348,42 @@ async def export_project_media(public_id: str, request: Request, background: Bac
     }
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(folder.iterdir()):
-            if path.is_file():
-                media_id = media_by_path.get(os.path.abspath(path)) or media_by_id.get(path.stem)
-                name = video_names.get(media_id, path.name) if media_id else path.name
-                zf.write(path, arcname=f"{project['public_id']}/{name}")
+            if not path.is_file():
+                continue
+            fname = path.name
+            is_video = path.suffix.lower() in (".mp4", ".webm")
+            if is_video and resolution in ("720p", "1080p"):
+                if resolution == "720p":
+                    if fname.endswith(f"_1080p{path.suffix}"):
+                        continue
+                elif resolution == "1080p":
+                    if fname.endswith(f"_720p{path.suffix}"):
+                        sibling_1080 = path.parent / fname.replace(f"_720p{path.suffix}", f"_1080p{path.suffix}")
+                        if sibling_1080.is_file():
+                            continue
+
+            clean_stem = path.stem
+            if clean_stem.endswith("_720p"):
+                clean_stem = clean_stem[:-5]
+            elif clean_stem.endswith("_1080p"):
+                clean_stem = clean_stem[:-6]
+
+            media_id = media_by_path.get(os.path.abspath(path)) or media_by_id.get(path.stem) or media_by_id.get(clean_stem)
+            if media_id and media_id in video_names:
+                export_base = os.path.splitext(video_names[media_id])[0]
+                if fname.endswith(f"_720p{path.suffix}"):
+                    name = f"{export_base}_720p{path.suffix}"
+                elif fname.endswith(f"_1080p{path.suffix}"):
+                    name = f"{export_base}_1080p{path.suffix}"
+                else:
+                    name = video_names[media_id]
+            else:
+                name = path.name
+            zf.write(path, arcname=f"{project['public_id']}/{name}")
+
     background.add_task(_remove_file, tmp)
-    return FileResponse(tmp, media_type="application/zip", filename=f"{project['public_id']}-media.zip")
+    res_suffix = f"-{resolution}" if resolution in ("720p", "1080p") else ""
+    return FileResponse(tmp, media_type="application/zip", filename=f"{project['public_id']}-media{res_suffix}.zip")
 
 
 @api.post("/boards/import", tags=["canvas"])
@@ -977,7 +1015,7 @@ async def workers(request: Request):
 
 class JobCreate(BaseModel):
     type: Literal["image", "character", "edit", "t2v", "i2v", "first_last", "r2v", "extend_video",
-                  "video_reference", "upscale", "template"]
+                  "video_reference", "upscale", "template", "upscale_video"]
     prompt: Optional[str] = None
     prompts: Optional[list[str]] = Field(None, description="prompt riêng từng biến thể ảnh")
     model: Optional[str] = Field(None, description="wire id chính xác; bỏ trống để chọn theo family")
@@ -1133,12 +1171,21 @@ async def get_media(media_id: str, request: Request):
 
 
 @api.get("/media/{media_id}/file", tags=["media"])
-async def media_file(media_id: str, request: Request, download: bool = False):
+async def media_file(media_id: str, request: Request, download: bool = False, resolution: Optional[str] = None):
     core = core_of(request)
-    path = core.media.local_file(media_id)
+    path = core.media.local_file(media_id, resolution=resolution)
     row = core.media.get(media_id)
     if path:
-        return FileResponse(path, media_type=(row or {}).get("mime"), filename=path.name if download else None)
+        filename = None
+        if download:
+            res_suffix = f"_{resolution}" if resolution in ("720p", "1080p") else ""
+            filename = f"{_safe_name(media_id)}{res_suffix}{path.suffix}"
+        return FileResponse(path, media_type=(row or {}).get("mime"), filename=filename)
+    if resolution == "1080p":
+        status = (row or {}).get("upscale_status")
+        if status in ("running", "queued"):
+            raise HTTPException(404, "Bản 1080p đang được xử lý, vui lòng thử lại sau giây lát")
+        raise HTTPException(404, "Chưa có bản 1080p cho video này")
     if row and row.get("url"):
         return RedirectResponse(row["url"])
     raise HTTPException(404, "chưa có file")
@@ -1190,6 +1237,28 @@ async def refresh_media(media_id: str, request: Request):
         return await core.jobs.refresh_media(media_id, board["worker_id"] if board else None)
     except fb.FlowError as exc:
         raise _bad(exc)
+
+
+@api.post("/media/{media_id}/upscale", tags=["media"])
+async def upscale_media_video(media_id: str, request: Request):
+    core = core_of(request)
+    media = core.media.get(media_id)
+    if not media:
+        raise HTTPException(404, "không tìm thấy media")
+    if media.get("kind") != "video":
+        raise HTTPException(400, "chỉ hỗ trợ upscale video")
+    board = core.db.one("SELECT id, worker_id FROM canvas_boards WHERE public_id=?", (media.get("workspace_id"),)) if media.get("workspace_id") else None
+    if board:
+        _assert_canvas_extension_online(core, board["worker_id"])
+    job = core.jobs.create({
+        "type": "upscale_video",
+        "source_media_id": media_id,
+        "workspace_id": media.get("workspace_id"),
+        "worker_id": board["worker_id"] if board else None,
+        "aspect": media.get("aspect") or "16:9",
+        "model": fb.VIDEO_UPSCALER_MODEL,
+    })
+    return job
 
 
 @api.delete("/media/{media_id}", tags=["media"])
@@ -1444,6 +1513,8 @@ class SettingsPatch(BaseModel):
     observe_enabled: Optional[bool] = None
     observe_responses: Optional[bool] = None
     download_media: Optional[bool] = None
+    auto_upscale_1080p: Optional[bool] = None
+    delete_720p_after_upscale: Optional[bool] = None
     poll_interval_s: Optional[float] = None
     min_submit_gap_s: Optional[float] = None
     job_timeout_min: Optional[float] = None

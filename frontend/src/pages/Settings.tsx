@@ -213,6 +213,28 @@ export const SettingsPage: React.FC = () => {
             </label>
           </div>
 
+          <div className="field">
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={!!draft.auto_upscale_1080p}
+                onChange={(e) => setDraft({ ...draft, auto_upscale_1080p: e.target.checked })}
+              />
+              Tự động nâng độ nét video lên 1080p ngầm (Veo 3.1)
+            </label>
+          </div>
+
+          <div className="field">
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={!!draft.delete_720p_after_upscale}
+                onChange={(e) => setDraft({ ...draft, delete_720p_after_upscale: e.target.checked })}
+              />
+              Tự động xóa bản 720p sau khi 1080p hoàn tất thành công
+            </label>
+          </div>
+
           <div className="grid-2">
             <div className="field">
               <div className="field-label">Chu kỳ poll video (giây)</div>

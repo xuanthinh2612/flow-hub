@@ -727,6 +727,33 @@ export function ResultViewer() {
                   : "Analyzing image — actions disabled until done"}
               </div>
             )}
+            {isVideo && currentMediaId && (
+              <>
+                <a
+                  className="result-viewer__btn"
+                  href={`${mediaUrl(currentMediaId)}${mediaUrl(currentMediaId).includes("?") ? "&" : "?"}resolution=720p&download=true`}
+                  download=""
+                >
+                  Tải 720p
+                </a>
+                <a
+                  className="result-viewer__btn"
+                  href={`${mediaUrl(currentMediaId)}${mediaUrl(currentMediaId).includes("?") ? "&" : "?"}resolution=1080p&download=true`}
+                  download=""
+                >
+                  Tải 1080p
+                </a>
+              </>
+            )}
+            {!isVideo && currentMediaId && (
+              <a
+                className="result-viewer__btn"
+                href={`${mediaUrl(currentMediaId)}${mediaUrl(currentMediaId).includes("?") ? "&" : "?"}download=true`}
+                download=""
+              >
+                Tải xuống
+              </a>
+            )}
             <button
               className="result-viewer__btn result-viewer__btn--primary"
               onClick={handleRegenerate}

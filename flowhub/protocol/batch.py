@@ -42,6 +42,7 @@ RPC_PROJECT_MEDIA = "Zzl0ze"
 RPC_MEDIA = "as29s"
 RPC_UPLOAD_IMAGE = "maseQ"
 RPC_UPSCALE_IMAGE = "SPrCad"
+RPC_UPSCALE_VIDEO = "p0UkFb"
 
 #: Human names for the RPCs we know. Anything else in the Observation log is
 #: flagged as new, which is usually the first sign that Flow changed.
@@ -53,6 +54,7 @@ RPC_NAMES: dict[str, str] = {
     RPC_GEN_VIDEO_REFERENCES: "Video Ingredients",
     RPC_GEN_VIDEO_EXTEND: "Extend video (kéo dài clip)",
     RPC_VIDEO_REFERENCE: "Chỉnh video bằng video tham chiếu (Omni Flash)",
+    RPC_UPSCALE_VIDEO: "Tăng độ nét video (1080p)",
     RPC_OPERATION: "Poll operation",
     RPC_PROJECT_MEDIA: "Danh sách media project",
     RPC_MEDIA: "URL media",
@@ -93,6 +95,7 @@ DEFAULT_CAPTCHA_ACTIONS: dict[str, str] = {
     RPC_GEN_VIDEO_REFERENCES: CAPTCHA_VIDEO,
     RPC_GEN_VIDEO_EXTEND: CAPTCHA_VIDEO,
     RPC_VIDEO_REFERENCE: CAPTCHA_VIDEO,
+    RPC_UPSCALE_VIDEO: CAPTCHA_VIDEO,
 }
 
 #: The extension swaps a freshly minted reCAPTCHA token in for this marker.
@@ -519,6 +522,36 @@ def upload_request(image_b64: str, project_id: str, mime_type: str, file_name: s
     first, second = client_uuid(), client_uuid()
     return build_envelope(RPC_UPLOAD_IMAGE, [context(project_id), image_b64, mime_type, 1, None, None, None,
                                              None, file_name, None, first, second])
+
+
+VIDEO_UPSCALER_MODEL = "veo_3_1_upsampler_1080p"
+
+
+def upscale_video_request(
+    source_media_id: str,
+    project_id: str,
+    aspect: int = VIDEO_LANDSCAPE,
+    model: str = VIDEO_UPSCALER_MODEL,
+    clip_id: Optional[str] = None,
+) -> str:
+    """Upsample / enhance a video to 1080p (p0UkFb).
+    Observed on build boq_labs-ai-sandbox-frontend_20261014.12_p0 for veo_3_1_upsampler_1080p.
+    """
+    if not source_media_id:
+        raise ValueError("upscale video cần source_media_id")
+    target_clip_id = str(clip_id or uuid.uuid4())
+    item: list[Any] = [
+        [None, str(source_media_id)],
+        None,
+        aspect,
+        None,
+        [None, target_clip_id, None, None, client_uuid()],
+        None,
+        aspect,
+    ]
+    item.extend([None] * 24)
+    item.append(str(model))
+    return build_envelope(RPC_UPSCALE_VIDEO, [[item], context(project_id), [client_uuid()]])
 
 
 def upscale_request(media_id: str, resolution: str = "2K") -> str:

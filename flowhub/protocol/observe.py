@@ -24,7 +24,8 @@ USER_AGENT = re.compile(r"^Mozilla/\d")
 
 #: RPCs whose body Flow Hub builds itself — the ones worth a builder check.
 BUILT_RPCS = {fb.RPC_GEN_IMAGE, fb.RPC_GEN_VIDEO, fb.RPC_GEN_VIDEO_TEXT, fb.RPC_GEN_VIDEO_FIRST_LAST,
-              fb.RPC_GEN_VIDEO_REFERENCES, fb.RPC_GEN_VIDEO_EXTEND, fb.RPC_VIDEO_REFERENCE}
+              fb.RPC_GEN_VIDEO_REFERENCES, fb.RPC_GEN_VIDEO_EXTEND, fb.RPC_VIDEO_REFERENCE,
+              fb.RPC_UPSCALE_VIDEO}
 
 
 # ── decoding ────────────────────────────────────────────────────────────────
@@ -401,6 +402,13 @@ def rebuild(rpcid: str, inner: Any) -> Optional[str]:
         raw_refs = item[8] if len(item) > 8 and isinstance(item[8], list) else []
         refs = [r[1] for r in raw_refs if isinstance(r, list) and len(r) > 1 and isinstance(r[1], str)]
         return fb.video_reference_request(prompt, project, src, aspect, model, refs or None)
+
+    if rpcid == fb.RPC_UPSCALE_VIDEO:
+        source_id = str(item[0][1]) if isinstance(item[0], list) and len(item[0]) > 1 else ""
+        aspect = item[2] if len(item) > 2 and isinstance(item[2], int) else fb.VIDEO_LANDSCAPE
+        clip_id = str(item[4][1]) if len(item) > 4 and isinstance(item[4], list) and len(item[4]) > 1 else None
+        model = str(item[-1]) if item and isinstance(item[-1], str) else fb.VIDEO_UPSCALER_MODEL
+        return fb.upscale_video_request(source_id, project, aspect=aspect, model=model, clip_id=clip_id)
 
     prompt_block = item[0][2]
     parts = prompt_block[0] if isinstance(prompt_block, list) and prompt_block else []

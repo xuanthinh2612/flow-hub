@@ -36,7 +36,15 @@ export async function openMedia(mediaId) {
       row('Tạo lúc', m.created_at ? new Date(m.created_at * 1000).toLocaleString('vi-VN') : ''), row('Ghi chú', m.note)),
     h('div', { class: 'actions' },
       h('button', { class: 'btn btn-sm', onclick: () => copy(m.id, 'Đã copy media ID') }, 'Copy media ID'),
-      h('a', { class: 'btn btn-sm', href: withKey(`/api/media/${encodeURIComponent(m.id)}/file?download=true`), download: '' }, 'Tải xuống'),
+      ...(isVideo ? [
+        h('a', { class: 'btn btn-sm', href: withKey(`/api/media/${encodeURIComponent(m.id)}/file?download=true&resolution=720p`), download: '' }, 'Tải 720p'),
+        h('a', { class: 'btn btn-sm', href: withKey(`/api/media/${encodeURIComponent(m.id)}/file?download=true&resolution=1080p`), download: '' }, 'Tải 1080p'),
+        h('button', { class: 'btn btn-sm', onclick: async () => {
+          try { await api(`/api/media/${encodeURIComponent(m.id)}/upscale`, { method: 'POST' }); toast('Đã kích hoạt upscale 1080p', 'ok'); closeModal(); } catch (e) { toast(e.message, 'err'); }
+        } }, 'Nâng lên 1080p'),
+      ] : [
+        h('a', { class: 'btn btn-sm', href: withKey(`/api/media/${encodeURIComponent(m.id)}/file?download=true`), download: '' }, 'Tải xuống'),
+      ]),
       h('button', { class: 'btn btn-sm', onclick: async () => {
         try { await api(`/api/media/${encodeURIComponent(m.id)}/refresh`, { method: 'POST' }); toast('Đã làm mới URL', 'ok'); openMedia(m.id); } catch (e) { toast(e.message, 'err'); }
       } }, 'Làm mới URL (as29s)'),

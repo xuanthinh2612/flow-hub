@@ -31,9 +31,9 @@ CREATE TABLE IF NOT EXISTS rpc_log (
 CREATE INDEX IF NOT EXISTS rpc_log_job ON rpc_log(job_id);
 
 CREATE TABLE IF NOT EXISTS media (
-  id TEXT PRIMARY KEY, kind TEXT, url TEXT, poster_url TEXT, url_at REAL, local_path TEXT, mime TEXT,
-  size INTEGER, prompt TEXT, model TEXT, source TEXT, job_id TEXT, project_id TEXT, aspect TEXT,
-  created_at REAL, note TEXT, workspace_id TEXT);
+  id TEXT PRIMARY KEY, kind TEXT, url TEXT, poster_url TEXT, url_at REAL, local_path TEXT, local_path_720p TEXT, local_path_1080p TEXT,
+  upscale_status TEXT, upscale_job_id TEXT, mime TEXT, size INTEGER, prompt TEXT, model TEXT, source TEXT, job_id TEXT, project_id TEXT,
+  aspect TEXT, created_at REAL, note TEXT, workspace_id TEXT);
 CREATE INDEX IF NOT EXISTS media_created ON media(created_at);
 CREATE INDEX IF NOT EXISTS media_workspace ON media(workspace_id, created_at);
 
@@ -129,6 +129,15 @@ class DB:
             self._conn.execute("ALTER TABLE canvas_boards ADD COLUMN flow_project_id TEXT")
         if "source_json" not in board_columns:
             self._conn.execute("ALTER TABLE canvas_boards ADD COLUMN source_json TEXT")
+        media_columns = {row[1] for row in self._conn.execute("PRAGMA table_info(media)")}
+        if "local_path_720p" not in media_columns:
+            self._conn.execute("ALTER TABLE media ADD COLUMN local_path_720p TEXT")
+        if "local_path_1080p" not in media_columns:
+            self._conn.execute("ALTER TABLE media ADD COLUMN local_path_1080p TEXT")
+        if "upscale_status" not in media_columns:
+            self._conn.execute("ALTER TABLE media ADD COLUMN upscale_status TEXT")
+        if "upscale_job_id" not in media_columns:
+            self._conn.execute("ALTER TABLE media ADD COLUMN upscale_job_id TEXT")
 
     @contextmanager
     def transaction(self):
@@ -181,6 +190,8 @@ class Settings:
         "observe_enabled": True,
         "observe_responses": False,
         "download_media": True,
+        "auto_upscale_1080p": True,
+        "delete_720p_after_upscale": False,
         "poll_interval_s": 5,
         "min_submit_gap_s": 2,
         "job_timeout_min": 10,

@@ -1375,6 +1375,30 @@ export function NodeCard(props: NodeProps<FlowNode>) {
   const isRunningChain = useGenerationStore((state) => state.runningChain);
   const llmBusy = isLLMBusy(data);
   const downloadable = !!data.mediaId && data.type !== "prompt" && data.type !== "note";
+  const [showDownloadMenu, setShowDownloadMenu] = useState(false);
+  const downloadMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showDownloadMenu) return;
+    function handleClickOutside(event: MouseEvent | PointerEvent) {
+      if (downloadMenuRef.current && !downloadMenuRef.current.contains(event.target as Node)) {
+        setShowDownloadMenu(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setShowDownloadMenu(false);
+      }
+    }
+    document.addEventListener("pointerdown", handleClickOutside, true);
+    document.addEventListener("mousedown", handleClickOutside, true);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handleClickOutside, true);
+      document.removeEventListener("mousedown", handleClickOutside, true);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showDownloadMenu]);
 
   const { nodes, edges } = useBoardStore();
   const videoInfo = data.type === "video" ? getVideoUpstreamInfo(props.id, nodes, edges) : null;
@@ -1395,7 +1419,7 @@ export function NodeCard(props: NodeProps<FlowNode>) {
     void useGenerationStore.getState().runChainFrom(props.id);
   }
 
-  function handleDownload(e: React.MouseEvent) {
+  function handleDownload(e: React.MouseEvent, chosenResolution?: "720p" | "1080p") {
     e.stopPropagation();
     // Download every variant, not just the first. `mediaIds` is the full
     // list — `mediaId` is just the active variant — so a 4-variant image
@@ -1411,14 +1435,19 @@ export function NodeCard(props: NodeProps<FlowNode>) {
     if (ids.length === 0) return;
     const safeTitle = (data.title || data.type).replace(/[^A-Za-z0-9_-]+/g, "_");
     const ext = downloadExt(data.type);
+    const resSuffix = chosenResolution ? `_${chosenResolution}` : "";
     // `<a download>` only honours the suggested filename when the resource
     // is same-origin — `/media/<id>` *is* same-origin (proxied by FastAPI),
     // so the title-based filename sticks.
     ids.forEach((mid, i) => {
       const a = document.createElement("a");
-      a.href = mediaUrl(mid);
+      const base = mediaUrl(mid);
+      const url = chosenResolution
+        ? `${base}${base.includes("?") ? "&" : "?"}resolution=${chosenResolution}`
+        : base;
+      a.href = url;
       const suffix = ids.length > 1 ? `-${i + 1}` : "";
-      a.download = `${safeTitle}-${data.shortId}${suffix}.${ext}`;
+      a.download = `${safeTitle}-${data.shortId}${suffix}${resSuffix}.${ext}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -1485,17 +1514,61 @@ export function NodeCard(props: NodeProps<FlowNode>) {
             {data.autoPromptStatus === "pending" ? "Composing…" : "Analyzing…"}
           </span>
         )}
-        <div className="node-header__actions">
+        <div className="node-header__actions" style={{ position: "relative" }} ref={downloadMenuRef}>
           {downloadable && (
-            <button
-              className="node-header__btn"
-              onClick={handleDownload}
-              aria-label="Download media"
-              title="Download"
-              tabIndex={0}
-            >
-              ⬇
-            </button>
+            <>
+              <button
+                className="node-header__btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (data.type === "video") {
+                    setShowDownloadMenu((prev) => !prev);
+                  } else {
+                    handleDownload(e);
+                  }
+                }}
+                aria-label="Download media"
+                title={data.type === "video" ? "Chọn độ phân giải tải về" : "Download"}
+                tabIndex={0}
+              >
+                ⬇
+              </button>
+              {showDownloadMenu && data.type === "video" && (
+                <div className="node-download-menu" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="node-download-menu__item"
+                    onClick={(e) => {
+                      setShowDownloadMenu(false);
+                      handleDownload(e, "720p");
+                    }}
+                  >
+                    <span>🎬</span> Tải 720p (.mp4)
+                  </button>
+                  <button
+                    type="button"
+                    className="node-download-menu__item"
+                    onClick={(e) => {
+                      setShowDownloadMenu(false);
+                      handleDownload(e, "1080p");
+                    }}
+                  >
+                    <span>✨</span> Tải 1080p (.mp4)
+                  </button>
+                  <button
+                    type="button"
+                    className="node-download-menu__item"
+                    onClick={(e) => {
+                      setShowDownloadMenu(false);
+                      handleDownload(e, "720p");
+                      handleDownload(e, "1080p");
+                    }}
+                  >
+                    <span>📦</span> Tải cả hai (720p & 1080p)
+                  </button>
+                </div>
+              )}
+            </>
           )}
           {isGenerable && (
             <button

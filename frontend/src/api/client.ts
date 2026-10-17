@@ -32,8 +32,11 @@ export function withKey(url: string): string {
 
 export const mediaFile = (id: string): string => withKey(`/api/media/${encodeURIComponent(id)}/file`);
 
-export const projectMediaZipUrl = (publicId: string): string =>
-  withKey(`/api/projects/${encodeURIComponent(publicId)}/media.zip`);
+export const projectMediaZipUrl = (publicId: string, resolution?: string): string => {
+  const base = `/api/projects/${encodeURIComponent(publicId)}/media.zip`;
+  const url = resolution ? `${base}?resolution=${encodeURIComponent(resolution)}` : base;
+  return withKey(url);
+};
 
 export async function api<T = any>(
   path: string,

@@ -66,7 +66,7 @@ globalThis.chrome = {
   runtime: { getManifest: () => ({ version: 'test' }), onInstalled: event(), onStartup: event(), onMessage: event() },
   storage: { local: { get: async () => ({}), set: async () => {} } },
   alarms: { create: noop, onAlarm: event() },
-  tabs: { onUpdated: event(), onRemoved: event() },
+  tabs: { onUpdated: event(), onRemoved: event(), onActivated: event() },
   webRequest: { onBeforeRequest: event(), onSendHeaders: event(), onCompleted: event(), onErrorOccurred: event() },
   debugger: { onEvent: event(), onDetach: event() },
   action: { setBadgeText: async () => {}, setTitle: async () => {} },

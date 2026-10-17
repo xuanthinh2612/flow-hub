@@ -173,13 +173,47 @@ export const MediaModalContent: React.FC<{ mediaId: string; onDeleted?: () => vo
         <button type="button" className="btn btn-sm" onClick={() => copy(media.id, 'Đã copy media ID')}>
           Copy media ID
         </button>
-        <a
-          className="btn btn-sm"
-          href={withKey(`/api/media/${encodeURIComponent(media.id)}/file?download=true`)}
-          download=""
-        >
-          Tải xuống
-        </a>
+        {isVideo ? (
+          <>
+            <a
+              className="btn btn-sm"
+              href={withKey(`/api/media/${encodeURIComponent(media.id)}/file?download=true&resolution=720p`)}
+              download=""
+            >
+              Tải 720p
+            </a>
+            <a
+              className="btn btn-sm"
+              href={withKey(`/api/media/${encodeURIComponent(media.id)}/file?download=true&resolution=1080p`)}
+              download=""
+            >
+              Tải 1080p
+            </a>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={async () => {
+                try {
+                  await api(`/api/media/${encodeURIComponent(media.id)}/upscale`, { method: 'POST' });
+                  toast('Đã kích hoạt upscale 1080p', 'ok');
+                  closeModal();
+                } catch (e: any) {
+                  toast(e.message, 'err');
+                }
+              }}
+            >
+              Nâng lên 1080p
+            </button>
+          </>
+        ) : (
+          <a
+            className="btn btn-sm"
+            href={withKey(`/api/media/${encodeURIComponent(media.id)}/file?download=true`)}
+            download=""
+          >
+            Tải xuống
+          </a>
+        )}
         <button type="button" className="btn btn-sm" onClick={handleRefresh}>
           Làm mới URL (as29s)
         </button>

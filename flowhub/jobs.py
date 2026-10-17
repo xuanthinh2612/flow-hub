@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("flowhub.jobs")
 
 IMAGE_TYPES = {"image", "character", "edit"}
-VIDEO_TYPES = {"t2v", "i2v", "first_last", "r2v", "extend_video", "video_reference"}
+VIDEO_TYPES = {"t2v", "i2v", "first_last", "r2v", "extend_video", "video_reference", "upscale_video"}
 TYPES = IMAGE_TYPES | VIDEO_TYPES | {"upload", "upscale", "template"}
 MODE_BY_TYPE = {"image": "image", "character": "image", "edit": "image", "t2v": "t2v", "i2v": "i2v",
                 "first_last": "first_last", "r2v": "r2v", "extend_video": "extend_video",
@@ -150,7 +150,7 @@ class JobEngine:
             s["prompt"] = build_character_prompt(c.get("gender"), c.get("country"), c.get("vibe"), c.get("extras", ""))
         if isinstance(s.get("prompt"), str):
             s["prompt"] = s["prompt"].strip()
-        if kind in IMAGE_TYPES | VIDEO_TYPES and not s.get("prompt"):
+        if kind in IMAGE_TYPES | VIDEO_TYPES and kind != "upscale_video" and not s.get("prompt"):
             raise ValueError("thiếu prompt")
 
         if kind in IMAGE_TYPES:
@@ -227,6 +227,12 @@ class JobEngine:
             s["resolution"] = str(s.get("resolution") or "2K").upper()
             if s["resolution"] not in fb.IMAGE_UPSCALE_RESOLUTIONS:
                 raise ValueError("upscale resolution: 2K hoặc 4K")
+        if kind == "upscale_video":
+            if not s.get("source_media_id") and s.get("media_id"):
+                s["source_media_id"] = s["media_id"]
+            if not s.get("source_media_id"):
+                raise ValueError("upscale_video cần source_media_id")
+            s["model"] = s.get("model") or fb.VIDEO_UPSCALER_MODEL
         if kind == "template":
             if self.templates.get(int(s.get("template_id") or 0)) is None:
                 raise ValueError("template_id không tồn tại")
@@ -311,6 +317,11 @@ class JobEngine:
         elif kind == "upscale":
             calls.append(Call(s["resolution"], fb.RPC_UPSCALE_IMAGE, captcha=cap(fb.RPC_UPSCALE_IMAGE),
                               build=lambda: fb.upscale_request(s["media_id"], s["resolution"])))
+        elif kind == "upscale_video":
+            source = str(s["source_media_id"])
+            aspect_code = s.get("aspect_code") or fb.VIDEO_ASPECTS.get(s.get("aspect") or "16:9") or fb.VIDEO_LANDSCAPE
+            calls.append(Call("upscale 1080p", fb.RPC_UPSCALE_VIDEO, captcha=cap(fb.RPC_UPSCALE_VIDEO),
+                              build=lambda: fb.upscale_video_request(source, project_id, aspect=aspect_code, model=model or fb.VIDEO_UPSCALER_MODEL)))
         elif kind == "upload":
             secret = self._secrets.get(job["id"], {})
             calls.append(Call(s.get("file_name") or "upload", fb.RPC_UPLOAD_IMAGE, captcha=cap(fb.RPC_UPLOAD_IMAGE),
@@ -442,6 +453,10 @@ class JobEngine:
         if ok == 0:
             job["status"] = "failed"
             job["error"] = first_error or "không có kết quả"
+            if job.get("type") == "upscale_video":
+                source_media_id = job.get("spec", {}).get("source_media_id")
+                if source_media_id:
+                    self.media.upsert({"id": source_media_id, "upscale_status": "failed"})
         else:
             job["status"] = "done" if ok >= total else "partial"
         job["finished_at"] = now()
@@ -457,6 +472,10 @@ class JobEngine:
         job["note"] = None
         self._save(job)
         self._secrets.pop(job["id"], None)
+        if job.get("type") == "upscale_video":
+            source_media_id = job.get("spec", {}).get("source_media_id")
+            if source_media_id:
+                self.media.upsert({"id": source_media_id, "upscale_status": "failed"})
         asyncio.create_task(self._webhook(job["id"]))
 
     def _block_chain(self, job: dict, message: str) -> None:
@@ -1051,10 +1070,24 @@ class JobEngine:
         op.update(done=True, url=video, poster_url=poster)
         job["results"].append({"kind": "video", "media_id": media_id, "url": video, "poster_url": poster})
         s = job["spec"]
-        self.media.upsert({"id": media_id, "kind": "video", "url": video, "poster_url": poster, "prompt": s.get("prompt"),
-                           "model": s.get("model"), "source": job["type"], "job_id": job["id"], "aspect": s.get("aspect"),
-                           "workspace_id": job.get("workspace_id", s.get("workspace_id"))})
-        self._download(media_id)
+        kind = job.get("type")
+
+        if kind == "upscale_video":
+            source_media_id = s.get("source_media_id") or media_id
+            self.media.upsert({
+                "id": source_media_id,
+                "upscale_status": "done",
+            })
+            if self.settings.get("download_media"):
+                asyncio.create_task(self._download_1080p_and_cleanup(source_media_id, video, job.get("worker_id")))
+        else:
+            self.media.upsert({"id": media_id, "kind": "video", "url": video, "poster_url": poster, "prompt": s.get("prompt"),
+                               "model": s.get("model"), "source": job["type"], "job_id": job["id"], "aspect": s.get("aspect"),
+                               "workspace_id": job.get("workspace_id", s.get("workspace_id")),
+                               "upscale_status": "queued" if self.settings.get("auto_upscale_1080p") else None})
+            self._download(media_id, resolution="720p", url=video)
+            if self.settings.get("auto_upscale_1080p"):
+                self._trigger_auto_upscale(media_id, job)
 
     async def _run_upload(self, job: dict, worker: "Worker", call: Call) -> None:
         secret = self._secrets.get(job["id"]) or {}
@@ -1117,9 +1150,49 @@ class JobEngine:
         job["results"].append({"kind": "raw", "data": ob.shrink(payload)})
         self._finish(job, 1, 1, None)
 
-    def _download(self, media_id: str) -> None:
+    def _download(self, media_id: str, resolution: Optional[str] = None, url: Optional[str] = None) -> None:
         if self.settings.get("download_media"):
-            asyncio.create_task(self.media.download(media_id))
+            asyncio.create_task(self.media.download(media_id, resolution=resolution, url=url))
+
+    async def _download_1080p_and_cleanup(self, media_id: str, url: str, worker_id: Optional[str]) -> None:
+        path = await self.media.download(media_id, worker_id=worker_id, resolution="1080p", url=url)
+        if path and self.settings.get("delete_720p_after_upscale"):
+            self.media.delete_resolution(media_id, "720p")
+            log.info("Đã xóa bản 720p của %s sau khi tải xong 1080p", media_id)
+
+    def _trigger_auto_upscale(self, media_id: str, parent_job: Any = None) -> None:
+        if not self.settings.get("auto_upscale_1080p"):
+            return
+        try:
+            if isinstance(parent_job, str):
+                parent_job = {"project_id": parent_job}
+            elif not isinstance(parent_job, dict):
+                parent_job = {}
+            workspace_id = parent_job.get("workspace_id") or parent_job.get("spec", {}).get("workspace_id")
+            project_id = parent_job.get("project_id") or parent_job.get("spec", {}).get("project_id")
+            worker_id = parent_job.get("worker_id") or parent_job.get("spec", {}).get("worker_id")
+            aspect = parent_job.get("aspect") or parent_job.get("spec", {}).get("aspect")
+            aspect_code = parent_job.get("aspect_code") or parent_job.get("spec", {}).get("aspect_code")
+            spec = {
+                "type": "upscale_video",
+                "source_media_id": media_id,
+                "workspace_id": workspace_id,
+                "project_id": project_id,
+                "worker_id": worker_id,
+                "aspect": aspect,
+                "aspect_code": aspect_code,
+                "model": fb.VIDEO_UPSCALER_MODEL,
+            }
+            upscale_job = self.create(spec)
+            self.media.upsert({
+                "id": media_id,
+                "upscale_status": "running",
+                "upscale_job_id": upscale_job["id"],
+            })
+            log.info("Kích hoạt auto upscale 1080p (job %s) cho media %s", upscale_job["id"], media_id)
+        except Exception as exc:
+            log.warning("Không thể tự động kích hoạt upscale 1080p cho %s: %s", media_id, exc)
+            self.media.upsert({"id": media_id, "upscale_status": "failed"})
 
     # ── one-off calls from the dashboard / API ──
     async def raw_rpc(self, rpcid: str, freq: str, captcha: Optional[str], worker_id: Optional[str] = None) -> dict:

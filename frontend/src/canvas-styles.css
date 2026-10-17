@@ -3042,7 +3042,8 @@ button:disabled {
 .node-card:hover .node-header__actions,
 .node-header__actions:has(.node-header__btn--running),
 .node-header__actions:has(.node-header__btn--cancel),
-.node-header__actions:has(.node-header__btn--resume) {
+.node-header__actions:has(.node-header__btn--resume),
+.node-header__actions:has(.node-download-menu) {
   opacity: 1;
   pointer-events: auto;
 }
@@ -3093,6 +3094,42 @@ button:disabled {
 .node-header__btn--resume:hover {
   color: var(--text);
   background: var(--panel-high);
+}
+
+.node-download-menu {
+  position: absolute;
+  top: 28px;
+  right: 0;
+  z-index: 1000;
+  background: var(--panel, #1e1e1e);
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 140px;
+}
+
+.node-download-menu__item {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text, #e5e5e5);
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.node-download-menu__item:hover {
+  background: var(--panel-high, #333333);
+  color: #fff;
 }
 
 /* ── Generation Dialog ───────────────────────────────────────────────────── */

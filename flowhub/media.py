@@ -135,12 +135,48 @@ class MediaStore:
 
     def delete(self, media_id: str) -> None:
         row = self.get(media_id)
-        if row and row.get("local_path"):
+        if row:
+            for k in ("local_path", "local_path_720p", "local_path_1080p"):
+                if row.get(k):
+                    try:
+                        Path(row[k]).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+        self.db.execute("DELETE FROM media WHERE id=?", (media_id,))
+
+    def delete_resolution(self, media_id: str, resolution: str) -> bool:
+        """Delete local file for a specific resolution (e.g. 720p after 1080p is ready)."""
+        row = self.get(media_id)
+        if not row:
+            return False
+        col = f"local_path_{resolution}"
+        path_str = row.get(col)
+        deleted = False
+        if path_str:
             try:
-                Path(row["local_path"]).unlink(missing_ok=True)
+                Path(path_str).unlink(missing_ok=True)
+                deleted = True
             except OSError:
                 pass
-        self.db.execute("DELETE FROM media WHERE id=?", (media_id,))
+        workspace_id = row.get("workspace_id")
+        project_folder = self.project_dir(workspace_id) if workspace_id else None
+        mime = row.get("mime") or ""
+        ext = EXT_BY_MIME.get(mime) or mimetypes.guess_extension(mime) or ".bin"
+        safe = _safe_name(media_id)
+        candidates = []
+        if project_folder:
+            candidates.append(project_folder / f"{safe}_{resolution}{ext}")
+        candidates.append(self.dir / f"{safe}_{resolution}{ext}")
+        for p in candidates:
+            try:
+                if p.is_file():
+                    p.unlink(missing_ok=True)
+                    deleted = True
+            except OSError:
+                pass
+        self.db.update("media", "id", media_id, {col: None})
+        self.events.publish("media", {"id": media_id, "deleted_resolution": resolution})
+        return deleted
 
     def clear(self) -> None:
         rows = self.db.all("SELECT local_path FROM media WHERE local_path IS NOT NULL")
@@ -187,88 +223,138 @@ class MediaStore:
         folder = self.project_dir(workspace_id) if workspace_id else self.dir
         return folder / _safe_name(media_id)
 
-    def local_file(self, media_id: str) -> Optional[Path]:
+    def local_file(self, media_id: str, resolution: Optional[str] = None) -> Optional[Path]:
         row = self.get(media_id)
-        if row and row.get("local_path") and Path(row["local_path"]).is_file():
-            return Path(row["local_path"])
-        # The row may predate the folder layout (or lost its local_path); fall
-        # back to looking the file up by id in its project folder, then root.
-        mime = (row or {}).get("mime") or ""
+        if not row:
+            return None
+        mime = row.get("mime") or ""
         ext = EXT_BY_MIME.get(mime) or mimetypes.guess_extension(mime) or ".bin"
-        safe = f"{_safe_name(media_id)}{ext}"
+        safe = _safe_name(media_id)
+        workspace_id = row.get("workspace_id")
         candidates = []
-        workspace_id = (row or {}).get("workspace_id")
         if workspace_id:
-            candidates.append(self.project_dir(workspace_id) / safe)
-        candidates.append(self.dir / safe)
-        for path in candidates:
-            if path.is_file():
-                self.db.update("media", "id", media_id, {"local_path": str(path)})
-                return path
+            candidates.append(self.project_dir(workspace_id))
+        candidates.append(self.dir)
+
+        if resolution == "720p":
+            if row.get("local_path_720p") and Path(row["local_path_720p"]).is_file():
+                return Path(row["local_path_720p"])
+            for folder in candidates:
+                p = folder / f"{safe}_720p{ext}"
+                if p.is_file():
+                    self.db.update("media", "id", media_id, {"local_path_720p": str(p)})
+                    return p
+            # fallback to legacy local_path
+            if row.get("local_path") and Path(row["local_path"]).is_file():
+                return Path(row["local_path"])
+            return None
+
+        if resolution == "1080p":
+            if row.get("local_path_1080p") and Path(row["local_path_1080p"]).is_file():
+                return Path(row["local_path_1080p"])
+            for folder in candidates:
+                p = folder / f"{safe}_1080p{ext}"
+                if p.is_file():
+                    self.db.update("media", "id", media_id, {"local_path_1080p": str(p)})
+                    return p
+            return None
+
+        # resolution is None: best available (1080p > 720p > local_path)
+        if row.get("local_path_1080p") and Path(row["local_path_1080p"]).is_file():
+            return Path(row["local_path_1080p"])
+        if row.get("local_path_720p") and Path(row["local_path_720p"]).is_file():
+            return Path(row["local_path_720p"])
+        if row.get("local_path") and Path(row["local_path"]).is_file():
+            return Path(row["local_path"])
+
+        for folder in candidates:
+            for suffix in (f"_1080p{ext}", f"_720p{ext}", f"{ext}"):
+                p = folder / f"{safe}{suffix}"
+                if p.is_file():
+                    self.db.update("media", "id", media_id, {"local_path": str(p)})
+                    return p
         return None
 
     def save_bytes(self, media_id: str, data: bytes, mime: Optional[str] = None,
-                   workspace_id: Optional[str] = None) -> Path:
+                   workspace_id: Optional[str] = None, resolution: Optional[str] = None) -> Path:
         mime = mime if mime and mime != "application/octet-stream" else sniff_mime(data)
         ext = EXT_BY_MIME.get(mime) or mimetypes.guess_extension(mime) or ".bin"
-        path = self.media_path(media_id, workspace_id)
-        path = path.with_suffix(ext)
+        row = self.get(media_id)
+        workspace_id = workspace_id or (row or {}).get("workspace_id")
+        folder = self.project_dir(workspace_id) if workspace_id else self.dir
+        if resolution in ("720p", "1080p"):
+            filename = f"{_safe_name(media_id)}_{resolution}{ext}"
+        else:
+            filename = f"{_safe_name(media_id)}{ext}"
+        path = folder / filename
         path.write_bytes(data)
-        changes = {"local_path": str(path), "mime": mime, "size": len(data)}
-        if mime.startswith("image/") and not (self.get(media_id) or {}).get("aspect"):
-            changes["aspect"] = image_aspect(data)   # media added by id: its crop when used as a frame
+        changes: dict[str, Any] = {"mime": mime, "size": len(data)}
+        if resolution == "720p":
+            changes["local_path_720p"] = str(path)
+            if not row or not row.get("local_path_1080p"):
+                changes["local_path"] = str(path)
+        elif resolution == "1080p":
+            changes["local_path_1080p"] = str(path)
+            changes["local_path"] = str(path)
+            changes["upscale_status"] = "done"
+        else:
+            changes["local_path"] = str(path)
+
+        if mime.startswith("image/") and not (row or {}).get("aspect"):
+            changes["aspect"] = image_aspect(data)
         self.db.update("media", "id", media_id, changes)
-        self.events.publish("media", {"id": media_id, "local": True})
+        self.events.publish("media", {"id": media_id, "local": True, "resolution": resolution})
         return path
 
-    async def download(self, media_id: str, worker_id: Optional[str] = None) -> Optional[Path]:
+    async def download(self, media_id: str, worker_id: Optional[str] = None,
+                       resolution: Optional[str] = None, url: Optional[str] = None) -> Optional[Path]:
         """Keep a local copy. Best effort: a failure leaves the remote url in place."""
+        active_key = f"{media_id}_{resolution}" if resolution else media_id
         while True:
-            local = self.local_file(media_id)
+            local = self.local_file(media_id, resolution=resolution)
             if local:
                 return local
-            active = self._downloads.get(media_id)
+            active = self._downloads.get(active_key)
             if active:
                 task, requested_worker = active
                 path = await asyncio.shield(task)
-                if path or self.local_file(media_id):
-                    return path or self.local_file(media_id)
-                # An automatic background download can fail without a worker.
-                # A chained job has its assigned extension and should retry via it.
+                if path or self.local_file(media_id, resolution=resolution):
+                    return path or self.local_file(media_id, resolution=resolution)
                 if worker_id and worker_id != requested_worker:
-                    if self._downloads.get(media_id) == active:
-                        self._downloads.pop(media_id, None)
+                    if self._downloads.get(active_key) == active:
+                        self._downloads.pop(active_key, None)
                     continue
                 return None
             break
         row = self.get(media_id)
-        url = (row or {}).get("url")
-        if not url:
+        target_url = url or (row or {}).get("url")
+        if not target_url:
             return None
-        task = asyncio.create_task(self._download_once(media_id, url, worker_id))
+        task = asyncio.create_task(self._download_once(media_id, target_url, worker_id, resolution=resolution))
         active = (task, worker_id)
-        self._downloads[media_id] = active
-        task.add_done_callback(lambda done, mid=media_id, entry=active: self._forget_download(mid, entry))
+        self._downloads[active_key] = active
+        task.add_done_callback(lambda done, mid=active_key, entry=active: self._forget_download(mid, entry))
         try:
             return await asyncio.shield(task)
         finally:
-            if task.done() and self._downloads.get(media_id) == active:
-                self._downloads.pop(media_id, None)
+            if task.done() and self._downloads.get(active_key) == active:
+                self._downloads.pop(active_key, None)
 
     def _forget_download(self, media_id: str, entry: tuple[asyncio.Task, Optional[str]]) -> None:
         if self._downloads.get(media_id) == entry:
             self._downloads.pop(media_id, None)
 
-    async def _download_once(self, media_id: str, url: str, worker_id: Optional[str]) -> Optional[Path]:
+    async def _download_once(self, media_id: str, url: str, worker_id: Optional[str],
+                             resolution: Optional[str] = None) -> Optional[Path]:
         try:
             async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
                 resp = await client.get(url)
             if resp.status_code == 200 and resp.content:
                 mime = resp.headers.get("content-type", "").split(";")[0].strip() or None
-                return self.save_bytes(media_id, resp.content, mime)
-            log.info("direct download of %s answered %s; asking a worker", media_id, resp.status_code)
+                return self.save_bytes(media_id, resp.content, mime, resolution=resolution)
+            log.info("direct download of %s (%s) answered %s; asking a worker", media_id, resolution, resp.status_code)
         except httpx.HTTPError as exc:
-            log.info("direct download of %s failed (%s); asking a worker", media_id, exc)
+            log.info("direct download of %s (%s) failed (%s); asking a worker", media_id, resolution, exc)
         worker = self.hub.pick(worker_id) if worker_id else self.hub.pick()
         if worker is None:
             return None
@@ -278,6 +364,6 @@ class MediaStore:
             log.info("worker fetch of %s failed: %s", media_id, exc)
             return None
         if result.get("b64"):
-            return self.save_bytes(media_id, base64.b64decode(result["b64"]), result.get("mime"))
+            return self.save_bytes(media_id, base64.b64decode(result["b64"]), result.get("mime"), resolution=resolution)
         log.warning("worker could not fetch %s: %s", media_id, result.get("error"))
         return None

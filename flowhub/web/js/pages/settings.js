@@ -48,6 +48,8 @@ export default {
             check('observe_enabled', 'Ghi Observation (request của trang Flow)'),
             check('observe_responses', 'Ghi cả response (chrome.debugger)', 'Chrome sẽ hiện thanh "đang debug trình duyệt" trên máy worker; đóng thanh đó = tự tắt.'),
             check('download_media', 'Tải ảnh / video về server khi xong'),
+            check('auto_upscale_1080p', 'Tự động nâng độ nét video lên 1080p ngầm (Veo 3.1)'),
+            check('delete_720p_after_upscale', 'Tự động xóa bản 720p sau khi 1080p hoàn tất thành công'),
             h('div', { class: 'grid-2' },
               num('poll_interval_s', 'Chu kỳ poll video (giây)', 'Giao diện Flow dùng ~5 giây'),
               num('min_submit_gap_s', 'Giãn cách giữa các lệnh tạo (giây)', 'Không bắn liên tục — giảm rủi ro "unusual activity"'),
